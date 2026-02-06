@@ -122,10 +122,21 @@ async function fetchDebug() {
         if (data.discovery) {
             const d = data.discovery;
 
-            // filters_by_sport
-            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">1. /search/filters_by_sport (Tennis)</h4>';
+            // All sports list
+            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">1. ALL Sports on Kalshi</h4>';
+            if (d.all_sports && d.all_sports.length > 0) {
+                html += `<div style="background:#0d1117; padding:8px; border-radius:4px; font-size:12px; word-break:break-all;">`;
+                html += d.all_sports.map(s => {
+                    const isTennis = s.toLowerCase().includes('tennis');
+                    return `<span style="color:${isTennis ? '#3fb950; font-weight:bold' : '#8b949e'}; margin-right:8px;">${s}</span>`;
+                }).join(' · ');
+                html += '</div>';
+            }
+
+            // Tennis filters
+            html += '<h4 style="color: #d29922; margin: 8px 0 8px;">Tennis Filters Detail</h4>';
             if (d.filters_by_sport) {
-                html += `<div style="background:#0d1117; padding:8px; border-radius:4px; font-size:11px; max-height:200px; overflow-y:auto; word-break:break-all;">`;
+                html += `<div style="background:#0d1117; padding:8px; border-radius:4px; font-size:11px; max-height:250px; overflow-y:auto; word-break:break-all;">`;
                 html += JSON.stringify(d.filters_by_sport, null, 2).replace(/\n/g, '<br>').replace(/ /g, '&nbsp;');
                 html += '</div>';
             }

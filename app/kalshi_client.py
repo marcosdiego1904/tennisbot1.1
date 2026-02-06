@@ -123,9 +123,10 @@ async def _discover_tennis_series(client: httpx.AsyncClient) -> list[str]:
     Dynamically discover ALL tennis series tickers from Kalshi.
 
     Strategy:
-    1. GET /search/filters_by_sport — lists sports and competitions
-    2. GET /series — iterate with category/tags to find tennis series
-    3. Fallback to known tickers if discovery fails
+    1. GET /search/filters_by_sport — lists sports and their competitions
+    2. GET /search/tags_by_categories — find category/tag for tennis
+    3. GET /series?category=...&tags=... — fetch all tennis series
+    4. Fallback to known tickers if discovery fails
 
     Results are cached for 1 hour.
     """
@@ -143,25 +144,34 @@ async def _discover_tennis_series(client: httpx.AsyncClient) -> list[str]:
         data = await _kalshi_get(client, "/search/filters_by_sport")
         filters = data.get("filters_by_sports", {})
 
-        # Look for Tennis (case-insensitive key matching)
+        # Match "Tennis" exactly — NOT "Table Tennis"
         tennis_filters = None
         for sport_name, sport_data in filters.items():
-            if "tennis" in sport_name.lower():
+            name_lower = sport_name.lower().strip()
+            if name_lower == "tennis":
                 tennis_filters = sport_data
                 break
 
         if tennis_filters:
-            # Extract scopes — these may contain series tickers or category info
-            scopes = tennis_filters.get("scopes", [])
-            competitions = tennis_filters.get("competitions", [])
+            # competitions can be a dict (name -> data) or a list
+            competitions = tennis_filters.get("competitions", {})
+            if isinstance(competitions, dict):
+                for comp_name, comp_data in competitions.items():
+                    if isinstance(comp_data, dict):
+                        for scope in comp_data.get("scopes", []):
+                            if isinstance(scope, str) and scope.startswith("KX"):
+                                discovered.add(scope)
+            elif isinstance(competitions, list):
+                for comp in competitions:
+                    if isinstance(comp, dict):
+                        for scope in comp.get("scopes", []):
+                            if isinstance(scope, str) and scope.startswith("KX"):
+                                discovered.add(scope)
 
-            # Each competition (ATP, WTA, Challenger, etc.) may have scopes with series info
-            for comp in competitions:
-                comp_scopes = comp.get("scopes", [])
-                for scope in comp_scopes:
-                    # Scopes might be series tickers or event tickers
-                    if isinstance(scope, str) and scope.startswith("KX"):
-                        discovered.add(scope)
+            # Also check top-level scopes
+            for scope in tennis_filters.get("scopes", []):
+                if isinstance(scope, str) and scope.startswith("KX"):
+                    discovered.add(scope)
     except Exception:
         pass
 
@@ -173,8 +183,14 @@ async def _discover_tennis_series(client: httpx.AsyncClient) -> list[str]:
         tags_by_cat = data.get("tags_by_categories", {})
 
         for cat_name, tags in tags_by_cat.items():
+            if not tags or not isinstance(tags, list):
+                continue
             for tag in tags:
-                if "tennis" in tag.lower():
+                if not isinstance(tag, str):
+                    continue
+                tag_lower = tag.lower().strip()
+                # Match "Tennis" but not "Table Tennis"
+                if tag_lower == "tennis" or tag_lower.startswith("atp") or tag_lower.startswith("wta"):
                     tennis_category = cat_name
                     tennis_tags.append(tag)
     except Exception:
@@ -313,34 +329,38 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
     try:
         data = await _kalshi_get(client, "/search/filters_by_sport")
         filters = data.get("filters_by_sports", {})
-        # Extract just tennis-related info
+
+        # Show ALL sports so we can see what tennis is called
+        debug_info["discovery"]["all_sports"] = list(filters.keys())
+
+        # Show tennis-related entries (exact match and partial)
+        tennis_entries = {}
         for sport_name, sport_data in filters.items():
-            if "tennis" in sport_name.lower():
-                debug_info["discovery"]["filters_by_sport"] = {
-                    "sport": sport_name,
-                    "data": sport_data,
-                }
-                break
-        if "filters_by_sport" not in debug_info["discovery"]:
-            debug_info["discovery"]["filters_by_sport"] = {
-                "note": "No tennis found",
-                "all_sports": list(filters.keys()),
-            }
+            name_lower = sport_name.lower().strip()
+            if "tennis" in name_lower:
+                tennis_entries[sport_name] = sport_data
+        debug_info["discovery"]["filters_by_sport"] = tennis_entries if tennis_entries else "No tennis-related sport found"
     except Exception as e:
         debug_info["discovery"]["filters_by_sport_error"] = str(e)
 
     try:
         data = await _kalshi_get(client, "/search/tags_by_categories")
         tags_by_cat = data.get("tags_by_categories", {})
-        # Show tennis-related tags
+        # Show tennis-related tags, safely handling None values
         tennis_info = {}
+        all_cats_preview = {}
         for cat, tags in tags_by_cat.items():
-            tennis_tags = [t for t in tags if "tennis" in t.lower() or "atp" in t.lower() or "wta" in t.lower()]
+            if not tags or not isinstance(tags, list):
+                all_cats_preview[cat] = f"({type(tags).__name__})"
+                continue
+            safe_tags = [t for t in tags if isinstance(t, str)]
+            tennis_tags = [t for t in safe_tags if "tennis" in t.lower() or "atp" in t.lower() or "wta" in t.lower() or "challenger" in t.lower()]
             if tennis_tags:
                 tennis_info[cat] = tennis_tags
+            all_cats_preview[cat] = safe_tags[:5]
         debug_info["discovery"]["tags_by_categories"] = tennis_info if tennis_info else {
             "note": "No tennis tags found",
-            "all_categories": {cat: tags[:5] for cat, tags in tags_by_cat.items()},
+            "all_categories": all_cats_preview,
         }
     except Exception as e:
         debug_info["discovery"]["tags_by_categories_error"] = str(e)
