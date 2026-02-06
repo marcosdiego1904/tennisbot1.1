@@ -82,6 +82,63 @@ async def get_rankings(refresh: bool = False):
     }
 
 
+@router.get("/debug/kalshi")
+async def debug_kalshi():
+    """
+    Debug endpoint: shows raw Kalshi API response
+    so we can see what events/markets exist and how they're structured.
+    """
+    import httpx
+    from app.kalshi_client import _kalshi_get
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # 1. Try the TENNIS series
+            try:
+                tennis_data = await _kalshi_get(client, "/events", params={
+                    "status": "open",
+                    "series_ticker": "TENNIS",
+                    "limit": 20,
+                })
+                tennis_events = tennis_data.get("events", [])
+            except Exception as e:
+                tennis_events = f"Error: {e}"
+
+            # 2. Broad search for anything tennis-related
+            try:
+                all_data = await _kalshi_get(client, "/events", params={
+                    "status": "open",
+                    "limit": 200,
+                })
+                all_events = all_data.get("events", [])
+                tennis_filtered = [
+                    {"ticker": e.get("event_ticker"), "title": e.get("title"), "category": e.get("category")}
+                    for e in all_events
+                    if any(kw in e.get("title", "").lower()
+                           for kw in ["tennis", "atp", "wta", "open", "grand slam",
+                                      "wimbledon", "roland", "match", "vs"])
+                ]
+            except Exception as e:
+                all_events = []
+                tennis_filtered = f"Error: {e}"
+
+            # 3. List all unique categories to understand Kalshi's structure
+            categories = list(set(
+                e.get("category", "unknown") for e in all_events
+            ))
+
+            return {
+                "tennis_series_events": tennis_events if isinstance(tennis_events, str) else len(tennis_events),
+                "tennis_series_sample": tennis_events[:3] if isinstance(tennis_events, list) else tennis_events,
+                "keyword_matches": tennis_filtered,
+                "total_open_events": len(all_events) if isinstance(all_events, list) else 0,
+                "all_categories": sorted(categories),
+            }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "tennisbot"}
