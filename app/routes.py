@@ -93,46 +93,53 @@ async def debug_kalshi():
 
     try:
         async with httpx.AsyncClient() as client:
-            # 1. Try the TENNIS series
-            try:
-                tennis_data = await _kalshi_get(client, "/events", params={
-                    "status": "open",
-                    "series_ticker": "TENNIS",
-                    "limit": 20,
-                })
-                tennis_events = tennis_data.get("events", [])
-            except Exception as e:
-                tennis_events = f"Error: {e}"
+            series_results = {}
 
-            # 2. Broad search for anything tennis-related
+            # 1. Try each known tennis series ticker
+            for series in ["KXATPMATCH", "KXWTAMATCH", "KXATPCHALLENGER"]:
+                try:
+                    data = await _kalshi_get(client, "/events", params={
+                        "status": "open",
+                        "series_ticker": series,
+                        "limit": 20,
+                    })
+                    events = data.get("events", [])
+                    series_results[series] = {
+                        "count": len(events),
+                        "sample": [
+                            {"ticker": e.get("event_ticker"), "title": e.get("title")}
+                            for e in events[:5]
+                        ],
+                    }
+                except Exception as e:
+                    series_results[series] = {"error": str(e)}
+
+            # 2. Also try fetching markets directly
+            markets_sample = []
             try:
-                all_data = await _kalshi_get(client, "/events", params={
+                mdata = await _kalshi_get(client, "/markets", params={
                     "status": "open",
-                    "limit": 200,
+                    "series_ticker": "KXATPMATCH",
+                    "limit": 10,
                 })
-                all_events = all_data.get("events", [])
-                tennis_filtered = [
-                    {"ticker": e.get("event_ticker"), "title": e.get("title"), "category": e.get("category")}
-                    for e in all_events
-                    if any(kw in e.get("title", "").lower()
-                           for kw in ["tennis", "atp", "wta", "open", "grand slam",
-                                      "wimbledon", "roland", "match", "vs"])
+                markets_sample = [
+                    {
+                        "ticker": m.get("ticker"),
+                        "title": m.get("title"),
+                        "subtitle": m.get("subtitle"),
+                        "yes_price": m.get("yes_price"),
+                        "no_price": m.get("no_price"),
+                        "volume": m.get("volume"),
+                        "event_ticker": m.get("event_ticker"),
+                    }
+                    for m in mdata.get("markets", [])[:5]
                 ]
             except Exception as e:
-                all_events = []
-                tennis_filtered = f"Error: {e}"
-
-            # 3. List all unique categories to understand Kalshi's structure
-            categories = list(set(
-                e.get("category", "unknown") for e in all_events
-            ))
+                markets_sample = f"Error: {e}"
 
             return {
-                "tennis_series_events": tennis_events if isinstance(tennis_events, str) else len(tennis_events),
-                "tennis_series_sample": tennis_events[:3] if isinstance(tennis_events, list) else tennis_events,
-                "keyword_matches": tennis_filtered,
-                "total_open_events": len(all_events) if isinstance(all_events, list) else 0,
-                "all_categories": sorted(categories),
+                "series_results": series_results,
+                "markets_sample": markets_sample,
             }
 
     except Exception as e:
