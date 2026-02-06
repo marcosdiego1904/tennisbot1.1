@@ -1,13 +1,18 @@
 """
 Kalshi API client — fetches live tennis markets and prices.
 
-Kalshi v2 API docs: https://trading-api.readme.io/reference
-Authentication: API key + secret via headers.
+Kalshi v2 API docs: https://docs.kalshi.com
+Authentication: RSA-PSS signature with SHA256.
+Headers: KALSHI-ACCESS-KEY, KALSHI-ACCESS-SIGNATURE, KALSHI-ACCESS-TIMESTAMP
 """
 
 import os
+import base64
+import datetime
 import httpx
 from typing import Optional
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 from app.models import MatchData, PlayerInfo, TournamentLevel, Surface
 
 
@@ -15,12 +20,73 @@ KALSHI_BASE_URL = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com
 KALSHI_API_KEY = os.getenv("KALSHI_API_KEY", "")
 KALSHI_API_SECRET = os.getenv("KALSHI_API_SECRET", "")
 
+_private_key = None
 
-def _headers() -> dict:
+
+def _load_private_key():
+    """Load RSA private key from the KALSHI_API_SECRET env var."""
+    global _private_key
+    if _private_key is not None:
+        return _private_key
+
+    secret = KALSHI_API_SECRET
+    if not secret:
+        return None
+
+    # The env var contains the PEM key content directly
+    # Railway stores multiline env vars; handle escaped newlines
+    key_data = secret.replace("\\n", "\n").encode("utf-8")
+    _private_key = serialization.load_pem_private_key(key_data, password=None)
+    return _private_key
+
+
+def _sign_request(method: str, path: str, timestamp: str) -> str:
+    """
+    Sign a Kalshi API request using RSA-PSS with SHA256.
+    Message format: {timestamp}{method}{path_without_query}
+    """
+    private_key = _load_private_key()
+    if not private_key:
+        raise ValueError("Kalshi private key not configured")
+
+    # Strip query params for signing
+    path_without_query = path.split("?")[0]
+    message = f"{timestamp}{method}{path_without_query}".encode("utf-8")
+
+    signature = private_key.sign(
+        message,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.DIGEST_LENGTH,
+        ),
+        hashes.SHA256(),
+    )
+
+    return base64.b64encode(signature).decode("utf-8")
+
+
+def _auth_headers(method: str, path: str) -> dict:
+    """Build authenticated headers for a Kalshi API request."""
+    timestamp = str(int(datetime.datetime.now().timestamp() * 1000))
+    signature = _sign_request(method, path, timestamp)
+
     return {
-        "Authorization": f"Bearer {KALSHI_API_KEY}",
+        "KALSHI-ACCESS-KEY": KALSHI_API_KEY,
+        "KALSHI-ACCESS-SIGNATURE": signature,
+        "KALSHI-ACCESS-TIMESTAMP": timestamp,
         "Content-Type": "application/json",
     }
+
+
+async def _kalshi_get(client: httpx.AsyncClient, path: str, params: dict = None) -> dict:
+    """Make an authenticated GET request to Kalshi API."""
+    # Build full URL with params for the actual request
+    url = f"{KALSHI_BASE_URL}{path}"
+    headers = _auth_headers("GET", f"/trade-api/v2{path}")
+
+    resp = await client.get(url, headers=headers, params=params, timeout=15.0)
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def get_tennis_events(client: httpx.AsyncClient) -> list[dict]:
@@ -28,37 +94,20 @@ async def get_tennis_events(client: httpx.AsyncClient) -> list[dict]:
     Fetch tennis-related events from Kalshi.
     Kalshi organizes markets under 'events'. We search for tennis events.
     """
-    params = {
-        "status": "open",
-        "series_ticker": "TENNIS",
-        "limit": 100,
-    }
-
     try:
-        resp = await client.get(
-            f"{KALSHI_BASE_URL}/events",
-            headers=_headers(),
-            params=params,
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        data = await _kalshi_get(client, "/events", params={
+            "status": "open",
+            "series_ticker": "TENNIS",
+            "limit": 100,
+        })
         return data.get("events", [])
     except httpx.HTTPStatusError:
-        # Fallback: try searching by category/keyword
-        params_fallback = {
+        # Fallback: fetch all open events and filter for tennis
+        data = await _kalshi_get(client, "/events", params={
             "status": "open",
             "limit": 200,
-        }
-        resp = await client.get(
-            f"{KALSHI_BASE_URL}/events",
-            headers=_headers(),
-            params=params_fallback,
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        all_events = resp.json().get("events", [])
-        # Filter for tennis
+        })
+        all_events = data.get("events", [])
         return [
             e for e in all_events
             if "tennis" in e.get("title", "").lower()
@@ -69,24 +118,14 @@ async def get_tennis_events(client: httpx.AsyncClient) -> list[dict]:
 
 async def get_markets_for_event(client: httpx.AsyncClient, event_ticker: str) -> list[dict]:
     """Fetch all markets under a specific event."""
-    resp = await client.get(
-        f"{KALSHI_BASE_URL}/events/{event_ticker}/markets",
-        headers=_headers(),
-        timeout=15.0,
-    )
-    resp.raise_for_status()
-    return resp.json().get("markets", [])
+    data = await _kalshi_get(client, f"/events/{event_ticker}/markets")
+    return data.get("markets", [])
 
 
 async def get_market(client: httpx.AsyncClient, ticker: str) -> dict:
     """Fetch a single market by ticker."""
-    resp = await client.get(
-        f"{KALSHI_BASE_URL}/markets/{ticker}",
-        headers=_headers(),
-        timeout=15.0,
-    )
-    resp.raise_for_status()
-    return resp.json().get("market", {})
+    data = await _kalshi_get(client, f"/markets/{ticker}")
+    return data.get("market", {})
 
 
 async def fetch_tennis_markets(
@@ -106,7 +145,6 @@ async def fetch_tennis_markets(
 
         for event in events:
             event_ticker = event.get("event_ticker", "")
-            title = event.get("title", "")
 
             markets = await get_markets_for_event(client, event_ticker)
 
@@ -134,7 +172,6 @@ def _parse_market(
     title = market.get("title", "")
     subtitle = market.get("subtitle", "")
     event_title = event.get("title", "")
-    full_text = f"{event_title} {title} {subtitle}".lower()
 
     # Extract yes price (the favorite's implied probability)
     yes_price = market.get("yes_price", 0)  # in cents (0-100)
