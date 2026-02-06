@@ -199,11 +199,76 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
         "parsed_ok": 0,
         "parsed_matches": [],
         "parse_failures": [],
+        "all_tennis_series": [],
     }
 
+    # Step 0: Discover ALL tennis-related series from Kalshi
+    try:
+        # Try fetching series list — search for tennis-related ones
+        candidate_prefixes = ["KXATP", "KXWTA", "KXTEN", "KXCH", "KXATCH", "KXCHAL"]
+        found_series = set()
+
+        for prefix in candidate_prefixes:
+            try:
+                data = await _kalshi_get(client, "/series", params={"search": prefix})
+                series_list = data.get("series", [])
+                for s in series_list:
+                    ticker = s.get("ticker", "")
+                    title = s.get("title", "")
+                    found_series.add(ticker)
+                    debug_info["all_tennis_series"].append({
+                        "ticker": ticker,
+                        "title": title,
+                        "source": f"search={prefix}",
+                    })
+            except Exception:
+                pass
+
+        # Also try broad "tennis" search
+        try:
+            data = await _kalshi_get(client, "/series", params={"search": "tennis"})
+            for s in data.get("series", []):
+                ticker = s.get("ticker", "")
+                title = s.get("title", "")
+                if ticker not in found_series:
+                    found_series.add(ticker)
+                    debug_info["all_tennis_series"].append({
+                        "ticker": ticker,
+                        "title": title,
+                        "source": "search=tennis",
+                    })
+        except Exception:
+            pass
+
+        # Try "challenger" search
+        try:
+            data = await _kalshi_get(client, "/series", params={"search": "challenger"})
+            for s in data.get("series", []):
+                ticker = s.get("ticker", "")
+                title = s.get("title", "")
+                if ticker not in found_series:
+                    found_series.add(ticker)
+                    debug_info["all_tennis_series"].append({
+                        "ticker": ticker,
+                        "title": title,
+                        "source": "search=challenger",
+                    })
+        except Exception:
+            pass
+
+    except Exception as e:
+        debug_info["series_search_error"] = str(e)
+
+    # Also try specific guesses for challenger series tickers
+    challenger_guesses = [
+        "KXATCHMATCH", "KXATPCHMATCH", "KXCHALLENGER",
+        "KXATPCH", "KXATPCHALLENGER", "KXCHALLMATCH",
+    ]
+
+    all_series_to_try = list(TENNIS_SERIES) + challenger_guesses
     all_raw = []
 
-    for series in TENNIS_SERIES:
+    for series in all_series_to_try:
         entry = {"series": series}
         try:
             markets = await _kalshi_get_all(client, "/markets", params={
