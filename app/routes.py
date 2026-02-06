@@ -82,6 +82,70 @@ async def get_rankings(refresh: bool = False):
     }
 
 
+@router.get("/debug/kalshi")
+async def debug_kalshi():
+    """
+    Debug endpoint: shows raw Kalshi API response
+    so we can see what events/markets exist and how they're structured.
+    """
+    import httpx
+    from app.kalshi_client import _kalshi_get
+
+    try:
+        async with httpx.AsyncClient() as client:
+            series_results = {}
+
+            # 1. Try each known tennis series ticker
+            for series in ["KXATPMATCH", "KXWTAMATCH", "KXATPCHALLENGER"]:
+                try:
+                    data = await _kalshi_get(client, "/events", params={
+                        "status": "open",
+                        "series_ticker": series,
+                        "limit": 20,
+                    })
+                    events = data.get("events", [])
+                    series_results[series] = {
+                        "count": len(events),
+                        "sample": [
+                            {"ticker": e.get("event_ticker"), "title": e.get("title")}
+                            for e in events[:5]
+                        ],
+                    }
+                except Exception as e:
+                    series_results[series] = {"error": str(e)}
+
+            # 2. Also try fetching markets directly
+            markets_sample = []
+            try:
+                mdata = await _kalshi_get(client, "/markets", params={
+                    "status": "open",
+                    "series_ticker": "KXATPMATCH",
+                    "limit": 10,
+                })
+                markets_sample = [
+                    {
+                        "ticker": m.get("ticker"),
+                        "title": m.get("title"),
+                        "subtitle": m.get("subtitle"),
+                        "yes_price": m.get("yes_price"),
+                        "no_price": m.get("no_price"),
+                        "volume": m.get("volume"),
+                        "event_ticker": m.get("event_ticker"),
+                    }
+                    for m in mdata.get("markets", [])[:5]
+                ]
+            except Exception as e:
+                markets_sample = f"Error: {e}"
+
+            return {
+                "series_results": series_results,
+                "markets_sample": markets_sample,
+            }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "tennisbot"}

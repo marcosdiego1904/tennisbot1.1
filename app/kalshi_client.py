@@ -92,28 +92,49 @@ async def _kalshi_get(client: httpx.AsyncClient, path: str, params: dict = None)
 async def get_tennis_events(client: httpx.AsyncClient) -> list[dict]:
     """
     Fetch tennis-related events from Kalshi.
-    Kalshi organizes markets under 'events'. We search for tennis events.
+    Kalshi uses specific series tickers for tennis:
+      - KXATPMATCH: ATP tour matches
+      - KXWTAMATCH: WTA tour matches
+    We also search for challenger-level events.
     """
-    try:
-        data = await _kalshi_get(client, "/events", params={
-            "status": "open",
-            "series_ticker": "TENNIS",
-            "limit": 100,
-        })
-        return data.get("events", [])
-    except httpx.HTTPStatusError:
-        # Fallback: fetch all open events and filter for tennis
-        data = await _kalshi_get(client, "/events", params={
-            "status": "open",
-            "limit": 200,
-        })
-        all_events = data.get("events", [])
-        return [
-            e for e in all_events
-            if "tennis" in e.get("title", "").lower()
-            or "atp" in e.get("title", "").lower()
-            or "wta" in e.get("title", "").lower()
-        ]
+    TENNIS_SERIES = [
+        "KXATPMATCH",
+        "KXWTAMATCH",
+        "KXATPCHALLENGER",
+    ]
+
+    all_events = []
+
+    for series in TENNIS_SERIES:
+        try:
+            data = await _kalshi_get(client, "/events", params={
+                "status": "open",
+                "series_ticker": series,
+                "limit": 100,
+            })
+            events = data.get("events", [])
+            all_events.extend(events)
+        except httpx.HTTPStatusError:
+            # Series might not exist, skip
+            continue
+
+    # Fallback: if no events found via series, do a broad keyword search
+    if not all_events:
+        try:
+            data = await _kalshi_get(client, "/events", params={
+                "status": "open",
+                "limit": 200,
+            })
+            broad_events = data.get("events", [])
+            all_events = [
+                e for e in broad_events
+                if any(kw in (e.get("title", "") + " " + e.get("event_ticker", "")).lower()
+                       for kw in ["tennis", "atp", "wta", "kxatpmatch", "kxwtamatch"])
+            ]
+        except httpx.HTTPStatusError:
+            pass
+
+    return all_events
 
 
 async def get_markets_for_event(client: httpx.AsyncClient, event_ticker: str) -> list[dict]:
