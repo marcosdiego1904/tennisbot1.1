@@ -134,6 +134,34 @@ async function fetchDebug() {
             html += `<p style="color:#f85149;">Series search error: ${data.series_search_error}</p>`;
         }
 
+        // Challenger events search results
+        if (data.challenger_events_search && data.challenger_events_search.length > 0) {
+            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">Challenger Events (from /events search)</h4>';
+            for (const e of data.challenger_events_search) {
+                html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:12px;">`;
+                html += `<strong style="color:#58a6ff;">${e.ticker}</strong> — ${e.title} `;
+                html += `<span style="color:#3fb950;">[series: ${e.series_ticker}]</span>`;
+                html += '</div>';
+            }
+        }
+        if (data.challenger_events_error) {
+            html += `<p style="color:#f85149;">Challenger events error: ${data.challenger_events_error}</p>`;
+        }
+
+        // ATP events search results
+        if (data.atp_events_search && data.atp_events_search.length > 0) {
+            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">ATP Events (from /events search)</h4>';
+            for (const e of data.atp_events_search) {
+                html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:12px;">`;
+                html += `<strong style="color:#58a6ff;">${e.ticker}</strong> — ${e.title} `;
+                html += `<span style="color:#3fb950;">[series: ${e.series_ticker}]</span>`;
+                html += '</div>';
+            }
+        }
+        if (data.atp_events_error) {
+            html += `<p style="color:#f85149;">ATP events error: ${data.atp_events_error}</p>`;
+        }
+
         // Series results
         if (data.series_tried) {
             html += '<h4 style="color: #58a6ff; margin: 12px 0 8px;">Series Tickers Tried</h4>';

@@ -266,6 +266,54 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
     ]
 
     all_series_to_try = list(TENNIS_SERIES) + challenger_guesses
+
+    # Also try fetching events directly with "challenger" search
+    try:
+        data = await _kalshi_get(client, "/events", params={"search": "challenger tennis", "status": "open", "limit": 50})
+        events = data.get("events", [])
+        debug_info["challenger_events_search"] = []
+        for e in events[:20]:
+            debug_info["challenger_events_search"].append({
+                "ticker": e.get("event_ticker", ""),
+                "title": e.get("title", ""),
+                "series_ticker": e.get("series_ticker", ""),
+                "category": e.get("category", ""),
+            })
+            # Collect any new series tickers
+            st = e.get("series_ticker", "")
+            if st and st not in all_series_to_try:
+                all_series_to_try.append(st)
+                debug_info["all_tennis_series"].append({
+                    "ticker": st,
+                    "title": f"From event: {e.get('title', '')}",
+                    "source": "events search",
+                })
+    except Exception as e:
+        debug_info["challenger_events_error"] = str(e)
+
+    # Also try broad event search for "ATP"
+    try:
+        data = await _kalshi_get(client, "/events", params={"search": "ATP", "status": "open", "limit": 100})
+        events = data.get("events", [])
+        debug_info["atp_events_search"] = []
+        for e in events[:30]:
+            st = e.get("series_ticker", "")
+            title = e.get("title", "")
+            debug_info["atp_events_search"].append({
+                "ticker": e.get("event_ticker", ""),
+                "title": title,
+                "series_ticker": st,
+            })
+            if st and st not in all_series_to_try:
+                all_series_to_try.append(st)
+                debug_info["all_tennis_series"].append({
+                    "ticker": st,
+                    "title": f"From ATP event: {title}",
+                    "source": "ATP events search",
+                })
+    except Exception as e:
+        debug_info["atp_events_error"] = str(e)
+
     all_raw = []
 
     for series in all_series_to_try:
