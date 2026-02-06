@@ -306,10 +306,7 @@ def _parse_market(
     if price is None:
         return None
 
-    # The "yes" player is named in yes_sub_title or extracted from title
-    yes_player = market.get("yes_sub_title", "")
-
-    # Extract both players from the title or rules
+    # Extract both player last names from the title "the X vs Y :"
     players = _extract_players_from_title(title)
     if not players:
         players = _extract_players_from_rules(rules)
@@ -318,24 +315,26 @@ def _parse_market(
 
     player_a, player_b = players
 
-    # Determine who the YES player is
+    # yes_sub_title has the full name of the YES player in this market
+    yes_player = market.get("yes_sub_title", "")
+
+    # Figure out which extracted name matches the YES player
+    # The YES player's last name should appear in one of player_a or player_b
+    yes_is_a = _name_matches(yes_player, player_a)
+
+    # The price is for the YES player winning
     fav_prob = price / 100.0
 
     if fav_prob >= 0.50:
         # YES player is the favorite
-        fav_name = yes_player if yes_player else player_a
-        dog_name = player_b if player_a.lower() in (yes_player or "").lower() else player_a
-        # Make sure dog != fav
-        if fav_name.lower() == dog_name.lower():
-            dog_name = player_b if fav_name.lower() == player_a.lower() else player_a
+        fav_name = yes_player or player_a
+        dog_name = player_b if yes_is_a else player_a
         kalshi_price = price
     else:
-        # YES player is the underdog, flip
+        # YES player is the underdog — flip
         fav_prob = 1.0 - fav_prob
-        dog_name = yes_player if yes_player else player_a
-        fav_name = player_b if player_a.lower() in (yes_player or "").lower() else player_a
-        if fav_name.lower() == dog_name.lower():
-            fav_name = player_b if dog_name.lower() == player_a.lower() else player_a
+        fav_name = player_b if yes_is_a else player_a
+        dog_name = yes_player or (player_a if yes_is_a else player_b)
         kalshi_price = 100 - price
 
     # Look up rankings
@@ -368,35 +367,46 @@ def _extract_players_from_title(title: str) -> Optional[tuple[str, str]]:
     Known format:
     "Will Hamad Medjedovic win the Medjedovic vs Basilashvili : Qualification Round 1 match?"
 
-    We extract from the "X vs Y" part embedded in the title.
+    The key is: "the {LastName1} vs {LastName2} :" — always anchored by "the" before and ":" after.
     """
     if not title:
         return None
 
-    # Find "X vs Y" pattern anywhere in the text (before any colon)
-    # e.g., "...the Medjedovic vs Basilashvili : Qualification..."
-    match = re.search(r'(\w[\w\s\'-]+?)\s+vs\.?\s+(\w[\w\s\'-]+?)(?:\s*[:\-\?]|\s+match)', title, re.IGNORECASE)
+    # Primary pattern: "the LastName1 vs LastName2 :"
+    # Names are 1-3 words, no spaces-greedy issue because we anchor on "the" and ":"
+    match = re.search(
+        r'\bthe\s+([\w\'-]+(?:\s+[\w\'-]+){0,2})\s+vs\.?\s+([\w\'-]+(?:\s+[\w\'-]+){0,2})\s*[:\-]',
+        title, re.IGNORECASE
+    )
     if match:
         p1 = match.group(1).strip().title()
         p2 = match.group(2).strip().title()
         if p1 and p2:
             return (p1, p2)
 
-    # Simpler fallback: just find "X vs Y" anywhere
+    # Secondary: "the LastName1 vs LastName2 ... match?"
+    match = re.search(
+        r'\bthe\s+([\w\'-]+(?:\s+[\w\'-]+){0,2})\s+vs\.?\s+([\w\'-]+(?:\s+[\w\'-]+){0,2})\s',
+        title, re.IGNORECASE
+    )
+    if match:
+        p1 = match.group(1).strip().title()
+        p2 = match.group(2).strip().title()
+        if p1 and p2:
+            return (p1, p2)
+
+    # Fallback: find "vs" and take last 1-2 words before, first 1-2 words after
     for sep in [" vs. ", " vs "]:
         if sep in title.lower():
             idx = title.lower().index(sep)
-            # Go backwards to find start of first name
             before = title[:idx].strip()
             after = title[idx + len(sep):].strip()
 
-            # Clean up: take last 1-3 words before "vs" as player name
-            p1_words = before.split()[-3:]  # last 3 words
+            p1_words = before.split()[-2:]
             p1 = " ".join(p1_words).title()
 
-            # Take first 1-3 words after "vs" as player name (stop at : or ?)
             after_clean = re.split(r'[:\?\-]', after)[0].strip()
-            p2_words = after_clean.split()[:3]
+            p2_words = after_clean.split()[:2]
             p2 = " ".join(p2_words).title()
 
             if p1 and p2:
@@ -421,6 +431,13 @@ def _extract_players_from_rules(rules: str) -> Optional[tuple[str, str]]:
             return (p1, p2)
 
     return None
+
+
+def _name_matches(full_name: str, last_name: str) -> bool:
+    """Check if a full name matches a last name (case-insensitive)."""
+    if not full_name or not last_name:
+        return False
+    return last_name.lower() in full_name.lower()
 
 
 def _lookup_ranking(player_name: str, rankings: dict) -> Optional[int]:
