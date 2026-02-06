@@ -139,7 +139,10 @@ async def get_tennis_events(client: httpx.AsyncClient) -> list[dict]:
 
 async def get_markets_for_event(client: httpx.AsyncClient, event_ticker: str) -> list[dict]:
     """Fetch all markets under a specific event."""
-    data = await _kalshi_get(client, f"/events/{event_ticker}/markets")
+    data = await _kalshi_get(client, "/markets", params={
+        "event_ticker": event_ticker,
+        "limit": 50,
+    })
     return data.get("markets", [])
 
 
