@@ -177,11 +177,24 @@ async function fetchDebug() {
         html += `<h4 style="color: #58a6ff; margin: 12px 0 8px;">Parsing</h4>`;
         html += `<p>OK: <strong style="color:#3fb950;">${data.parsed_ok || 0}</strong> | Failed: <strong style="color:#f85149;">${(data.parse_failures || []).length}</strong></p>`;
 
+        // Show successfully parsed matches
+        if (data.parsed_matches && data.parsed_matches.length > 0) {
+            html += '<h4 style="color: #3fb950; margin: 12px 0 8px;">Parsed Matches</h4>';
+            for (const m of data.parsed_matches) {
+                html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px; font-size:12px; word-break:break-all;">`;
+                html += `<strong style="color:#58a6ff;">${m.fav}</strong> vs ${m.dog} `;
+                html += `| price: ${m.price}¢ | fav: ${m.fav_pct}% `;
+                html += `| ${m.tournament} (${m.level})`;
+                html += '</div>';
+            }
+        }
+
         if (data.parse_failures && data.parse_failures.length > 0) {
+            html += '<h4 style="color: #f85149; margin: 12px 0 8px;">Parse Failures</h4>';
             for (const f of data.parse_failures) {
                 html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px; font-size:12px; color:#f85149; word-break:break-all;">`;
                 html += `<strong>${f.ticker}</strong>: ${f.reason}<br>`;
-                html += `yes: ${f.yes_price} | last: ${f.last_price} | bid: ${f.yes_bid} | ask: ${f.yes_ask}`;
+                html += `price: ${f.price} | last: ${f.last_price} | bid: ${f.yes_bid} | ask: ${f.yes_ask}`;
                 html += '</div>';
             }
         }
