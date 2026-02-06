@@ -1,0 +1,377 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1117;
+    color: #e1e4e8;
+    min-height: 100vh;
+}
+
+/* Header */
+.header {
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #f0f6fc;
+}
+
+.header h1 span {
+    color: #58a6ff;
+}
+
+.header-right {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.date-display {
+    color: #8b949e;
+    font-size: 14px;
+}
+
+.btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    background: #21262d;
+    color: #c9d1d9;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.15s;
+}
+
+.btn:hover {
+    background: #30363d;
+}
+
+.btn-primary {
+    background: #238636;
+    border-color: #2ea043;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #2ea043;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Summary bar */
+.summary-bar {
+    display: flex;
+    gap: 16px;
+    padding: 16px 24px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+}
+
+.summary-card {
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    min-width: 120px;
+    text-align: center;
+}
+
+.summary-card .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8b949e;
+    margin-bottom: 4px;
+}
+
+.summary-card .value {
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.summary-card.buy .value { color: #3fb950; }
+.summary-card.wait .value { color: #d29922; }
+.summary-card.skip .value { color: #8b949e; }
+.summary-card.total .value { color: #58a6ff; }
+
+/* Main content */
+.main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+.section-title {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8b949e;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #21262d;
+}
+
+/* Match cards */
+.matches-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 32px;
+}
+
+.match-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 16px 20px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 16px;
+    align-items: center;
+    transition: border-color 0.15s;
+}
+
+.match-card:hover {
+    border-color: #484f58;
+}
+
+.match-card.signal-BUY {
+    border-left: 3px solid #3fb950;
+}
+
+.match-card.signal-WAIT {
+    border-left: 3px solid #d29922;
+}
+
+.match-card.signal-SKIP {
+    border-left: 3px solid #484f58;
+    opacity: 0.65;
+}
+
+/* Signal badge */
+.signal-badge {
+    width: 60px;
+    padding: 6px 0;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: 0.5px;
+}
+
+.signal-badge.BUY {
+    background: rgba(63, 185, 80, 0.15);
+    color: #3fb950;
+}
+
+.signal-badge.WAIT {
+    background: rgba(210, 153, 34, 0.15);
+    color: #d29922;
+}
+
+.signal-badge.SKIP {
+    background: rgba(139, 148, 158, 0.1);
+    color: #8b949e;
+}
+
+/* Match info */
+.match-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.match-players {
+    font-size: 16px;
+    font-weight: 600;
+    color: #f0f6fc;
+}
+
+.match-players .fav {
+    color: #58a6ff;
+}
+
+.match-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: #8b949e;
+}
+
+.match-meta .tag {
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: #21262d;
+    border: 1px solid #30363d;
+}
+
+.match-detail {
+    font-size: 13px;
+    color: #8b949e;
+    margin-top: 2px;
+}
+
+/* Price section */
+.match-prices {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    text-align: center;
+}
+
+.price-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.price-block .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8b949e;
+}
+
+.price-block .price {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.price-block.kalshi .price {
+    color: #c9d1d9;
+}
+
+.price-block.target .price {
+    color: #58a6ff;
+}
+
+.price-block.edge .price.positive {
+    color: #3fb950;
+}
+
+.price-block.edge .price.negative {
+    color: #f85149;
+}
+
+/* Manual input panel */
+.manual-panel {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 32px;
+}
+
+.manual-panel h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #f0f6fc;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.form-group label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8b949e;
+}
+
+.form-group input,
+.form-group select {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+    color: #c9d1d9;
+    font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+/* Loading / Empty states */
+.loading, .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #8b949e;
+}
+
+.loading .spinner {
+    display: inline-block;
+    width: 32px;
+    height: 32px;
+    border: 3px solid #30363d;
+    border-top-color: #58a6ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.empty-state p {
+    margin-bottom: 8px;
+}
+
+/* Manual result card */
+.manual-result {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid #30363d;
+    background: #0d1117;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .match-card {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .match-prices {
+        justify-content: flex-start;
+    }
+
+    .summary-bar {
+        flex-wrap: wrap;
+    }
+
+    .form-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
