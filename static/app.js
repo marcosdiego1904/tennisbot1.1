@@ -116,131 +116,81 @@ async function fetchDebug() {
         const data = await resp.json();
 
         let html = '<div class="manual-panel" style="margin-top: 12px;">';
-        html += '<h3>Raw Kalshi Debug Info</h3>';
+        html += '<h3>Kalshi Debug — Series Discovery</h3>';
 
-        // Discovered tennis series (from /series endpoint)
-        if (data.all_tennis_series && data.all_tennis_series.length > 0) {
-            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">ALL Tennis Series Found on Kalshi</h4>';
-            for (const s of data.all_tennis_series) {
-                html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:12px;">`;
-                html += `<strong style="color:#3fb950;">${s.ticker}</strong> — ${s.title} `;
-                html += `<span style="color:#8b949e; font-size:10px;">(${s.source})</span>`;
+        // Discovery results
+        if (data.discovery) {
+            const d = data.discovery;
+
+            // filters_by_sport
+            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">1. /search/filters_by_sport (Tennis)</h4>';
+            if (d.filters_by_sport) {
+                html += `<div style="background:#0d1117; padding:8px; border-radius:4px; font-size:11px; max-height:200px; overflow-y:auto; word-break:break-all;">`;
+                html += JSON.stringify(d.filters_by_sport, null, 2).replace(/\n/g, '<br>').replace(/ /g, '&nbsp;');
                 html += '</div>';
             }
-        } else {
-            html += '<p style="color:#8b949e;">No tennis series discovered from /series endpoint</p>';
-        }
-        if (data.series_search_error) {
-            html += `<p style="color:#f85149;">Series search error: ${data.series_search_error}</p>`;
-        }
+            if (d.filters_by_sport_error) {
+                html += `<p style="color:#f85149;">${d.filters_by_sport_error}</p>`;
+            }
 
-        // Challenger events search results
-        if (data.challenger_events_search && data.challenger_events_search.length > 0) {
-            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">Challenger Events (from /events search)</h4>';
-            for (const e of data.challenger_events_search) {
-                html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:12px;">`;
-                html += `<strong style="color:#58a6ff;">${e.ticker}</strong> — ${e.title} `;
-                html += `<span style="color:#3fb950;">[series: ${e.series_ticker}]</span>`;
+            // tags_by_categories
+            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">2. /search/tags_by_categories (Tennis tags)</h4>';
+            if (d.tags_by_categories) {
+                html += `<div style="background:#0d1117; padding:8px; border-radius:4px; font-size:11px; max-height:200px; overflow-y:auto; word-break:break-all;">`;
+                html += JSON.stringify(d.tags_by_categories, null, 2).replace(/\n/g, '<br>').replace(/ /g, '&nbsp;');
                 html += '</div>';
             }
-        }
-        if (data.challenger_events_error) {
-            html += `<p style="color:#f85149;">Challenger events error: ${data.challenger_events_error}</p>`;
-        }
-
-        // ATP events search results
-        if (data.atp_events_search && data.atp_events_search.length > 0) {
-            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">ATP Events (from /events search)</h4>';
-            for (const e of data.atp_events_search) {
-                html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:12px;">`;
-                html += `<strong style="color:#58a6ff;">${e.ticker}</strong> — ${e.title} `;
-                html += `<span style="color:#3fb950;">[series: ${e.series_ticker}]</span>`;
-                html += '</div>';
+            if (d.tags_by_categories_error) {
+                html += `<p style="color:#f85149;">${d.tags_by_categories_error}</p>`;
             }
-        }
-        if (data.atp_events_error) {
-            html += `<p style="color:#f85149;">ATP events error: ${data.atp_events_error}</p>`;
-        }
 
-        // Series results
-        if (data.series_tried) {
-            html += '<h4 style="color: #58a6ff; margin: 12px 0 8px;">Series Tickers Tried</h4>';
-            for (const s of data.series_tried) {
-                const color = s.error ? '#f85149' : (s.count > 0 ? '#3fb950' : '#8b949e');
-                const status = s.error ? `ERROR` : `${s.count} markets`;
-                html += `<p style="margin:4px 0;"><strong>${s.series}</strong>: <span style="color:${color};">${status}</span>`;
-                if (s.first_title) html += ` — "${s.first_title}"`;
-                html += `</p>`;
-            }
-        }
-
-        // Status tests
-        for (const st of ['status_active', 'status_open', 'status_trading']) {
-            if (data[st]) {
-                const d = data[st];
-                html += `<p style="margin:4px 0;"><strong>${st}</strong>: `;
-                if (d.error) {
-                    html += `<span style="color:#f85149;">${d.error}</span>`;
-                } else {
-                    html += `${d.count} markets, ${d.with_prices} with prices`;
-                    if (d.sample_fields && d.sample_fields.length > 0) {
-                        html += `<br><span style="color:#8b949e; font-size:11px;">Fields: ${d.sample_fields.join(', ')}</span>`;
-                    }
-                }
-                html += '</p>';
-            }
-        }
-
-        // Full market dump — THE KEY INFO
-        if (data.full_market_dump) {
-            html += '<h4 style="color: #d29922; margin: 16px 0 8px;">FULL Market Object (all fields)</h4>';
-            html += `<div style="background:#0d1117; padding:12px; border-radius:4px; font-size:11px; word-break:break-all; max-height:400px; overflow-y:auto;">`;
-            const m = data.full_market_dump;
-            for (const [key, val] of Object.entries(m)) {
-                const valStr = val === null ? '<em style="color:#8b949e;">null</em>' :
-                    typeof val === 'object' ? JSON.stringify(val) : String(val);
-                const highlight = (val !== null && val !== 0 && val !== '') ? 'color:#3fb950;' : 'color:#8b949e;';
-                html += `<div style="margin:2px 0;"><strong>${key}</strong>: <span style="${highlight}">${valStr}</span></div>`;
-            }
-            html += '</div>';
-        }
-
-        // Events by series
-        for (const key of ['events_KXATPMATCH', 'events_KXWTAMATCH']) {
-            if (data[key]) {
-                html += `<h4 style="color: #58a6ff; margin: 12px 0 8px;">${key}</h4>`;
-                for (const e of data[key]) {
-                    html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:12px; word-break:break-all;">`;
-                    html += `<strong>${e.ticker}</strong> — ${e.title}`;
+            // Discovered series tickers
+            html += '<h4 style="color: #3fb950; margin: 12px 0 8px;">3. Discovered Tennis Series Tickers</h4>';
+            if (d.discovered_series && d.discovered_series.length > 0) {
+                for (const ticker of d.discovered_series) {
+                    html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:13px;">`;
+                    html += `<strong style="color:#3fb950;">${ticker}</strong>`;
                     html += '</div>';
                 }
+            } else {
+                html += '<p style="color:#f85149;">No series discovered — using fallback tickers</p>';
             }
         }
 
+        // Series market counts
+        if (data.series_tried) {
+            html += '<h4 style="color: #58a6ff; margin: 12px 0 8px;">4. Markets Per Series</h4>';
+            for (const s of data.series_tried) {
+                const color = s.error ? '#f85149' : (s.count > 0 ? '#3fb950' : '#8b949e');
+                const status = s.error ? `ERROR: ${s.error}` : `${s.count} markets (${s.with_prices || 0} with prices)`;
+                html += `<p style="margin:4px 0;"><strong>${s.series}</strong>: <span style="color:${color};">${status}</span></p>`;
+            }
+        }
+
+        // Total
+        html += `<p style="margin:12px 0;"><strong>Total raw markets:</strong> ${data.raw_markets_found || 0}</p>`;
+
         // Parse results
-        html += `<h4 style="color: #58a6ff; margin: 12px 0 8px;">Parsing</h4>`;
+        html += `<h4 style="color: #58a6ff; margin: 12px 0 8px;">5. Parsing Results</h4>`;
         html += `<p>OK: <strong style="color:#3fb950;">${data.parsed_ok || 0}</strong> | Failed: <strong style="color:#f85149;">${(data.parse_failures || []).length}</strong></p>`;
 
-        // Show successfully parsed matches
         if (data.parsed_matches && data.parsed_matches.length > 0) {
-            html += '<h4 style="color: #3fb950; margin: 12px 0 8px;">Parsed Matches</h4>';
             for (const m of data.parsed_matches) {
-                html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px; font-size:12px; word-break:break-all;">`;
+                html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px; font-size:12px;">`;
                 html += `<strong style="color:#58a6ff;">${m.fav}</strong> vs ${m.dog} `;
-                html += `| price: ${m.price}¢ | fav: ${m.fav_pct}% `;
-                html += `| ${m.tournament} (${m.level})`;
+                html += `| ${m.fav_pct}% | ${m.tournament} (${m.level})`;
                 html += '</div>';
             }
         }
 
         if (data.parse_failures && data.parse_failures.length > 0) {
-            html += '<h4 style="color: #f85149; margin: 12px 0 8px;">Parse Failures</h4>';
+            html += '<details style="margin-top:8px;"><summary style="color:#f85149; cursor:pointer;">Parse Failures</summary>';
             for (const f of data.parse_failures) {
-                html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px; font-size:12px; color:#f85149; word-break:break-all;">`;
-                html += `<strong>${f.ticker}</strong>: ${f.reason}<br>`;
-                html += `price: ${f.price} | last: ${f.last_price} | bid: ${f.yes_bid} | ask: ${f.yes_ask}`;
+                html += `<div style="background:#0d1117; padding:6px; margin:4px 0; border-radius:4px; font-size:11px; color:#f85149;">`;
+                html += `${f.ticker}: ${f.reason}`;
                 html += '</div>';
             }
+            html += '</details>';
         }
 
         html += '</div>';
