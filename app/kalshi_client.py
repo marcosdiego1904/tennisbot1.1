@@ -160,15 +160,21 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
     debug_info = {
         "series_tried": [],
         "raw_markets_found": 0,
-        "raw_markets_sample": [],
+        "full_market_dump": None,
         "parsed_ok": 0,
         "parse_failures": [],
     }
 
     all_raw = []
 
-    # Try each series
-    for series in TENNIS_SERIES:
+    # Try many possible series tickers for tennis
+    all_series_to_try = TENNIS_SERIES + [
+        "KXATPCHALLENGER",
+        "KXATCHALL",
+        "KXATCHCHAL",
+    ]
+
+    for series in all_series_to_try:
         entry = {"series": series}
         try:
             data = await _kalshi_get(client, "/markets", params={
@@ -178,47 +184,59 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
             })
             markets = data.get("markets", [])
             entry["count"] = len(markets)
-            entry["sample"] = [
-                {k: m.get(k) for k in ["ticker", "title", "subtitle", "yes_price", "no_price", "volume", "event_ticker", "status"]}
-                for m in markets[:3]
-            ]
+            if markets:
+                # Show first market sample
+                entry["first_title"] = markets[0].get("title", "")
             all_raw.extend(markets)
         except Exception as e:
             entry["error"] = str(e)
         debug_info["series_tried"].append(entry)
 
-    # Also try the /events endpoint to see what's there
-    try:
-        data = await _kalshi_get(client, "/events", params={
-            "status": "open",
-            "limit": 200,
-        })
-        all_events = data.get("events", [])
-        tennis_events = [
-            {"ticker": e.get("event_ticker"), "title": e.get("title"), "series": e.get("series_ticker")}
-            for e in all_events
-            if any(kw in (e.get("title", "") + " " + e.get("event_ticker", "") + " " + e.get("series_ticker", "")).lower()
-                   for kw in ["tennis", "atp", "wta", "challenger", "kxatp", "kxwta", "kxatch"])
-        ]
-        debug_info["tennis_events_from_broad_search"] = tennis_events[:10]
-        debug_info["total_open_events"] = len(all_events)
+    # Dump ALL fields from first market so we can see what's available
+    if all_raw:
+        debug_info["full_market_dump"] = all_raw[0]
 
-        # Extract unique series tickers from tennis events
-        tennis_series_found = list(set(
-            e.get("series", "") for e in tennis_events if e.get("series")
-        ))
-        debug_info["tennis_series_found_in_events"] = tennis_series_found
+    # Try fetching with different statuses to find live matches
+    for status_val in ["active", "open", "trading"]:
+        try:
+            data = await _kalshi_get(client, "/markets", params={
+                "status": status_val,
+                "series_ticker": "KXATPMATCH",
+                "limit": 5,
+            })
+            markets = data.get("markets", [])
+            has_prices = [m for m in markets if m.get("yes_price") or m.get("last_price") or m.get("yes_bid")]
+            debug_info[f"status_{status_val}"] = {
+                "count": len(markets),
+                "with_prices": len(has_prices),
+                "sample_fields": list(markets[0].keys()) if markets else [],
+            }
+        except Exception as e:
+            debug_info[f"status_{status_val}"] = {"error": str(e)}
+
+    # Search events broadly — try to find challenger events
+    try:
+        # Get ALL events with cursor pagination isn't possible in one call
+        # But let's try to find tennis specifically
+        for series_q in ["KXATPMATCH", "KXWTAMATCH"]:
+            data = await _kalshi_get(client, "/events", params={
+                "status": "open",
+                "series_ticker": series_q,
+                "limit": 5,
+            })
+            events = data.get("events", [])
+            if events:
+                debug_info[f"events_{series_q}"] = [
+                    {"ticker": e.get("event_ticker"), "title": e.get("title"), "series": e.get("series_ticker")}
+                    for e in events[:3]
+                ]
     except Exception as e:
-        debug_info["broad_search_error"] = str(e)
+        debug_info["events_search_error"] = str(e)
 
     debug_info["raw_markets_found"] = len(all_raw)
-    debug_info["raw_markets_sample"] = [
-        {k: m.get(k) for k in ["ticker", "title", "subtitle", "yes_price", "no_price", "volume", "event_ticker"]}
-        for m in all_raw[:5]
-    ]
 
-    # Try parsing and show failures
-    for m in all_raw[:10]:
+    # Show parse attempts
+    for m in all_raw[:5]:
         result = _parse_market(m, {}, {})
         if result:
             debug_info["parsed_ok"] += 1
@@ -226,8 +244,10 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
             debug_info["parse_failures"].append({
                 "ticker": m.get("ticker"),
                 "title": m.get("title"),
-                "subtitle": m.get("subtitle"),
                 "yes_price": m.get("yes_price"),
+                "last_price": m.get("last_price"),
+                "yes_bid": m.get("yes_bid"),
+                "yes_ask": m.get("yes_ask"),
                 "reason": _debug_parse_failure(m),
             })
 
