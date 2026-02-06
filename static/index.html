@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TennisBot — Trading Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <h1><span>TennisBot</span> Dashboard</h1>
+        <div class="header-right">
+            <span class="date-display" id="currentDate"></span>
+            <button class="btn btn-primary" id="btnRefresh" onclick="fetchAnalysis()">
+                Refresh Markets
+            </button>
+        </div>
+    </header>
+
+    <!-- Summary bar -->
+    <div class="summary-bar" id="summaryBar" style="display: none;">
+        <div class="summary-card buy">
+            <div class="label">Buy</div>
+            <div class="value" id="sumBuy">0</div>
+        </div>
+        <div class="summary-card wait">
+            <div class="label">Wait</div>
+            <div class="value" id="sumWait">0</div>
+        </div>
+        <div class="summary-card skip">
+            <div class="label">Skip</div>
+            <div class="value" id="sumSkip">0</div>
+        </div>
+        <div class="summary-card total">
+            <div class="label">Total</div>
+            <div class="value" id="sumTotal">0</div>
+        </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="main">
+
+        <!-- Manual calculator -->
+        <div class="manual-panel">
+            <h3>Manual Calculator</h3>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Favorite Name</label>
+                    <input type="text" id="mFavName" placeholder="Rublev" value="Rublev">
+                </div>
+                <div class="form-group">
+                    <label>Underdog Name</label>
+                    <input type="text" id="mDogName" placeholder="Bublik" value="Bublik">
+                </div>
+                <div class="form-group">
+                    <label>Favorite %</label>
+                    <input type="number" id="mFavPct" placeholder="85" value="85" min="1" max="99">
+                </div>
+                <div class="form-group">
+                    <label>Kalshi Price (cents)</label>
+                    <input type="number" id="mKalshiPrice" placeholder="83" value="83" min="1" max="99">
+                </div>
+                <div class="form-group">
+                    <label>Fav Ranking</label>
+                    <input type="number" id="mFavRank" placeholder="8" value="8" min="1">
+                </div>
+                <div class="form-group">
+                    <label>Dog Ranking</label>
+                    <input type="number" id="mDogRank" placeholder="26" value="26" min="1">
+                </div>
+                <div class="form-group">
+                    <label>Tournament Level</label>
+                    <select id="mTournament">
+                        <option value="ATP">ATP / WTA Tour</option>
+                        <option value="Challenger">Challenger</option>
+                        <option value="Grand Slam">Grand Slam</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Surface</label>
+                    <select id="mSurface">
+                        <option value="Hard">Hard</option>
+                        <option value="Clay">Clay</option>
+                        <option value="Grass">Grass</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Volume ($)</label>
+                    <input type="number" id="mVolume" placeholder="50000" value="50000" min="0">
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="analyzeManual()">Analyze</button>
+
+            <div id="manualResult"></div>
+        </div>
+
+        <!-- Live markets section -->
+        <div class="section-title">Live Kalshi Markets</div>
+        <div id="matchesContainer">
+            <div class="empty-state">
+                <p>Click <strong>Refresh Markets</strong> to fetch live tennis markets from Kalshi.</p>
+                <p>Or use the manual calculator above to analyze a match.</p>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
