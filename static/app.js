@@ -105,6 +105,81 @@ function renderResults(data) {
 }
 
 
+// --- Debug: show raw Kalshi data on the dashboard ---
+
+async function fetchDebug() {
+    const container = document.getElementById("debugContainer");
+    container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Fetching raw Kalshi data...</p></div>';
+
+    try {
+        const resp = await fetch("/api/debug/kalshi");
+        const data = await resp.json();
+
+        let html = '<div class="manual-panel" style="margin-top: 12px;">';
+        html += '<h3>Raw Kalshi Debug Info</h3>';
+
+        // Series results
+        if (data.series_tried) {
+            html += '<h4 style="color: #58a6ff; margin: 12px 0 8px;">Series Tickers Tried</h4>';
+            for (const s of data.series_tried) {
+                const status = s.error ? `<span style="color:#f85149;">ERROR: ${s.error}</span>` :
+                    `<span style="color:#3fb950;">${s.count} markets found</span>`;
+                html += `<p style="margin: 4px 0;"><strong>${s.series}</strong>: ${status}</p>`;
+
+                if (s.sample && s.sample.length > 0) {
+                    for (const m of s.sample) {
+                        html += `<div style="background:#0d1117; padding:8px; margin:4px 0 4px 16px; border-radius:4px; font-size:12px; word-break:break-all;">`;
+                        html += `ticker: <strong>${m.ticker || '-'}</strong><br>`;
+                        html += `title: <strong>${m.title || '-'}</strong><br>`;
+                        html += `subtitle: ${m.subtitle || '-'}<br>`;
+                        html += `yes: ${m.yes_price}¢ | no: ${m.no_price}¢ | vol: ${m.volume}<br>`;
+                        html += `event: ${m.event_ticker || '-'}`;
+                        html += '</div>';
+                    }
+                }
+            }
+        }
+
+        // Tennis events from broad search
+        if (data.tennis_events_from_broad_search) {
+            html += `<h4 style="color: #58a6ff; margin: 12px 0 8px;">Tennis Events (Broad Search): ${data.tennis_events_from_broad_search.length}</h4>`;
+            for (const e of data.tennis_events_from_broad_search) {
+                html += `<div style="background:#0d1117; padding:6px 8px; margin:4px 0; border-radius:4px; font-size:12px; word-break:break-all;">`;
+                html += `<strong>${e.ticker}</strong> — ${e.title} [series: ${e.series}]`;
+                html += '</div>';
+            }
+        }
+
+        // Series found in events
+        if (data.tennis_series_found_in_events) {
+            html += `<h4 style="color: #d29922; margin: 12px 0 8px;">Actual Tennis Series Tickers Found</h4>`;
+            html += `<p style="font-size:14px;"><strong>${data.tennis_series_found_in_events.join(', ')}</strong></p>`;
+        }
+
+        // Parse results
+        html += `<h4 style="color: #58a6ff; margin: 12px 0 8px;">Parsing Results</h4>`;
+        html += `<p>Parsed OK: <strong style="color:#3fb950;">${data.parsed_ok || 0}</strong></p>`;
+
+        if (data.parse_failures && data.parse_failures.length > 0) {
+            html += `<p>Parse failures: <strong style="color:#f85149;">${data.parse_failures.length}</strong></p>`;
+            for (const f of data.parse_failures) {
+                html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px; font-size:12px; color:#f85149; word-break:break-all;">`;
+                html += `<strong>${f.ticker}</strong>: ${f.reason}<br>`;
+                html += `title: "${f.title}" | subtitle: "${f.subtitle}" | yes: ${f.yes_price}¢`;
+                html += '</div>';
+            }
+        }
+
+        html += `<p style="margin-top:8px; color:#8b949e;">Total open events on Kalshi: ${data.total_open_events || '?'}</p>`;
+        html += '</div>';
+
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div style="color:#f85149; padding:12px;">Debug error: ${err.message}</div>`;
+    }
+}
+
+
 function renderMatchCard(r) {
     const signal = r.signal;
     const isSkip = signal === "SKIP";
