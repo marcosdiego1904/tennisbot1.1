@@ -75,11 +75,56 @@ async def analyze_manual(payload: dict):
 async def get_rankings(refresh: bool = False):
     """Get current cached rankings. Pass ?refresh=true to force update."""
     rankings = await fetch_rankings(force_refresh=refresh)
+
+    # Also show sample of player names for debugging matching issues
+    sample = dict(list(rankings.items())[:30])
+
     return {
         "status": "ok",
         "count": len(rankings),
+        "sample": sample,
         "rankings": rankings,
     }
+
+
+@router.get("/debug/rankings")
+async def debug_rankings():
+    """Debug: show how Kalshi player names match against api-tennis rankings."""
+    rankings = await fetch_rankings()
+    tournament_db = load_tournament_db()
+
+    # Get some matches from Kalshi
+    try:
+        matches = await fetch_tennis_markets(rankings, tournament_db)
+    except Exception as e:
+        matches = []
+
+    debug = {
+        "rankings_count": len(rankings),
+        "rankings_sample": dict(list(rankings.items())[:20]),
+        "match_lookups": [],
+    }
+
+    for m in matches[:20]:
+        fav_name = m.player_fav.name
+        dog_name = m.player_dog.name
+        fav_lower = fav_name.lower()
+        dog_lower = dog_name.lower()
+        fav_last = fav_lower.split()[-1] if fav_lower.split() else ""
+        dog_last = dog_lower.split()[-1] if dog_lower.split() else ""
+
+        debug["match_lookups"].append({
+            "fav_name": fav_name,
+            "dog_name": dog_name,
+            "fav_full_match": rankings.get(fav_lower),
+            "fav_last_match": rankings.get(fav_last),
+            "dog_full_match": rankings.get(dog_lower),
+            "dog_last_match": rankings.get(dog_last),
+            "fav_ranking": m.player_fav.ranking,
+            "dog_ranking": m.player_dog.ranking,
+        })
+
+    return debug
 
 
 @router.get("/debug/kalshi")

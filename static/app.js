@@ -1,10 +1,103 @@
 // TennisBot Dashboard — frontend logic
 
+// --- State ---
+let allResults = [];
+let activeFilters = { BUY: true, WAIT: true, SKIP: false };  // WAIT kept for backwards compat
+let autoRefreshInterval = null;
+let countdownSeconds = 0;
+let countdownTimer = null;
+
+const AUTO_REFRESH_SECONDS = 60;
+
+
+// --- Init ---
+
 document.addEventListener("DOMContentLoaded", () => {
     const now = new Date();
     document.getElementById("currentDate").textContent =
-        now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+        now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 });
+
+
+// --- Calculator toggle ---
+
+function toggleCalculator() {
+    const panel = document.getElementById("manualPanel");
+    const btn = document.getElementById("btnCalcToggle");
+    const isOpen = panel.style.display !== "none";
+    panel.style.display = isOpen ? "none" : "block";
+    btn.classList.toggle("open", !isOpen);
+}
+
+
+// --- Signal filter toggles ---
+
+function toggleFilter(signal) {
+    activeFilters[signal] = !activeFilters[signal];
+
+    // Update button appearance
+    const cardMap = { BUY: ".summary-card.buy", WAIT: ".summary-card.wait", SKIP: ".summary-card.skip" };
+    const card = document.querySelector(cardMap[signal]);
+    if (card) card.classList.toggle("active", activeFilters[signal]);
+
+    applyFilters();
+}
+
+function applyFilters() {
+    const container = document.getElementById("matchesContainer");
+    const filtered = allResults.filter(r => activeFilters[r.signal]);
+
+    if (filtered.length === 0 && allResults.length > 0) {
+        container.innerHTML = '<div class="empty-state"><p>No matches for selected filters. Click the signal counters above to toggle.</p></div>';
+        return;
+    }
+
+    if (filtered.length === 0) return;
+
+    container.innerHTML = '<div class="matches-grid">'
+        + filtered.map(renderMatchCard).join("")
+        + '</div>';
+}
+
+
+// --- Auto-refresh ---
+
+function toggleAutoRefresh() {
+    const btn = document.getElementById("btnAutoRefresh");
+
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        clearInterval(countdownTimer);
+        autoRefreshInterval = null;
+        countdownTimer = null;
+        btn.textContent = "Auto: OFF";
+        btn.classList.remove("active");
+        document.getElementById("refreshTimer").textContent = "";
+    } else {
+        btn.textContent = "Auto: ON";
+        btn.classList.add("active");
+        startCountdown();
+        autoRefreshInterval = setInterval(() => {
+            fetchAnalysis();
+            startCountdown();
+        }, AUTO_REFRESH_SECONDS * 1000);
+    }
+}
+
+function startCountdown() {
+    countdownSeconds = AUTO_REFRESH_SECONDS;
+    clearInterval(countdownTimer);
+    updateCountdownDisplay();
+    countdownTimer = setInterval(() => {
+        countdownSeconds--;
+        if (countdownSeconds <= 0) countdownSeconds = 0;
+        updateCountdownDisplay();
+    }, 1000);
+}
+
+function updateCountdownDisplay() {
+    document.getElementById("refreshTimer").textContent = countdownSeconds > 0 ? countdownSeconds + "s" : "";
+}
 
 
 // --- Fetch live analysis from Kalshi ---
@@ -26,6 +119,11 @@ async function fetchAnalysis() {
         }
 
         renderResults(data);
+
+        // Update last-updated timestamp
+        const now = new Date();
+        document.getElementById("lastUpdated").textContent =
+            "Updated " + now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
     } catch (err) {
         container.innerHTML = `
             <div class="empty-state">
@@ -92,6 +190,7 @@ function renderResults(data) {
     }
 
     if (!data.results || data.results.length === 0) {
+        allResults = [];
         container.innerHTML = `
             <div class="empty-state">
                 <p>${data.message || "No tennis markets found."}</p>
@@ -99,9 +198,17 @@ function renderResults(data) {
         return;
     }
 
-    container.innerHTML = '<div class="matches-grid">'
-        + data.results.map(renderMatchCard).join("")
-        + '</div>';
+    // Sort: BUY first, then WAIT sorted by edge desc, then SKIP
+    const order = { BUY: 0, WAIT: 1, SKIP: 2 };
+    allResults = data.results.sort((a, b) => {
+        const oa = order[a.signal] ?? 3;
+        const ob = order[b.signal] ?? 3;
+        if (oa !== ob) return oa - ob;
+        // Within same signal, sort by edge descending (best opportunity first)
+        return (b.edge || -999) - (a.edge || -999);
+    });
+
+    applyFilters();
 }
 
 
@@ -115,7 +222,7 @@ async function fetchDebug() {
         const resp = await fetch("/api/debug/kalshi");
         const data = await resp.json();
 
-        let html = '<div class="manual-panel" style="margin-top: 12px;">';
+        let html = '<div class="manual-panel" style="margin-top: 12px; border-radius: 8px;">';
         html += '<h3>Kalshi Debug — Series Discovery</h3>';
 
         // Discovery results
@@ -212,6 +319,8 @@ async function fetchDebug() {
 }
 
 
+// --- Render a single match card ---
+
 function renderMatchCard(r) {
     const signal = r.signal;
     const isSkip = signal === "SKIP";
@@ -219,20 +328,19 @@ function renderMatchCard(r) {
     // Price section
     let pricesHTML = "";
     if (!isSkip) {
-        const edgeClass = r.edge > 0 ? "positive" : "negative";
         pricesHTML = `
             <div class="match-prices">
                 <div class="price-block kalshi">
-                    <span class="label">Kalshi</span>
+                    <span class="label">Market</span>
                     <span class="price">${r.kalshi_price}¢</span>
                 </div>
                 <div class="price-block target">
-                    <span class="label">Target</span>
+                    <span class="label">Limit Order</span>
                     <span class="price">${r.target_price}¢</span>
                 </div>
                 <div class="price-block edge">
-                    <span class="label">Edge</span>
-                    <span class="price ${edgeClass}">${r.edge > 0 ? "+" : ""}${r.edge}¢</span>
+                    <span class="label">Spread</span>
+                    <span class="price">${r.edge.toFixed(1)}¢</span>
                 </div>
             </div>`;
     }
@@ -256,14 +364,14 @@ function renderMatchCard(r) {
 
     return `
         <div class="match-card signal-${signal}">
-            <div class="signal-badge ${signal}">${signal}</div>
-            <div class="match-info">
+            <div class="card-top">
+                <div class="signal-badge ${signal}">${signal}</div>
                 <div class="match-players">
                     <span class="fav">${r.fav_name}</span> vs ${r.dog_name}
                 </div>
-                <div class="match-meta">${tagsHTML}</div>
-                ${detailHTML}
             </div>
+            <div class="match-meta">${tagsHTML}</div>
+            ${detailHTML}
             ${pricesHTML}
         </div>`;
 }

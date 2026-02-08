@@ -15,23 +15,26 @@
         <h1><span>TennisBot</span> Dashboard</h1>
         <div class="header-right">
             <span class="date-display" id="currentDate"></span>
+            <span class="last-updated" id="lastUpdated"></span>
+            <span class="auto-refresh-timer" id="refreshTimer"></span>
+            <button class="btn btn-sm" id="btnAutoRefresh" onclick="toggleAutoRefresh()">Auto: OFF</button>
             <button class="btn btn-primary" id="btnRefresh" onclick="fetchAnalysis()">
                 Refresh Markets
             </button>
         </div>
     </header>
 
-    <!-- Summary bar -->
+    <!-- Summary bar — clickable filters -->
     <div class="summary-bar" id="summaryBar" style="display: none;">
-        <div class="summary-card buy">
+        <div class="summary-card buy clickable active" onclick="toggleFilter('BUY')">
             <div class="label">Buy</div>
             <div class="value" id="sumBuy">0</div>
         </div>
-        <div class="summary-card wait">
+        <div class="summary-card wait clickable active" onclick="toggleFilter('WAIT')">
             <div class="label">Wait</div>
             <div class="value" id="sumWait">0</div>
         </div>
-        <div class="summary-card skip">
+        <div class="summary-card skip clickable" onclick="toggleFilter('SKIP')">
             <div class="label">Skip</div>
             <div class="value" id="sumSkip">0</div>
         </div>
@@ -44,8 +47,13 @@
     <!-- Main content -->
     <div class="main">
 
-        <!-- Manual calculator -->
-        <div class="manual-panel">
+        <!-- Manual calculator toggle -->
+        <button class="btn btn-toggle" id="btnCalcToggle" onclick="toggleCalculator()">
+            Manual Calculator
+        </button>
+
+        <!-- Manual calculator (hidden by default) -->
+        <div class="manual-panel" id="manualPanel" style="display: none;">
             <h3>Manual Calculator</h3>
             <div class="form-grid">
                 <div class="form-group">
@@ -103,7 +111,6 @@
         <div id="matchesContainer">
             <div class="empty-state">
                 <p>Click <strong>Refresh Markets</strong> to fetch live tennis markets from Kalshi.</p>
-                <p>Or use the manual calculator above to analyze a match.</p>
             </div>
         </div>
 
