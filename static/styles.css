@@ -15,10 +15,12 @@ body {
 .header {
     background: #161b22;
     border-bottom: 1px solid #30363d;
-    padding: 16px 24px;
+    padding: 12px 24px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .header h1 {
@@ -33,15 +35,29 @@ body {
 
 .header-right {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .date-display {
     color: #8b949e;
-    font-size: 14px;
+    font-size: 13px;
 }
 
+.last-updated {
+    color: #8b949e;
+    font-size: 11px;
+}
+
+.auto-refresh-timer {
+    color: #58a6ff;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 24px;
+}
+
+/* Buttons */
 .btn {
     padding: 8px 16px;
     border-radius: 6px;
@@ -73,22 +89,75 @@ body {
     cursor: not-allowed;
 }
 
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 11px;
+}
+
+.btn-sm.active {
+    background: #238636;
+    border-color: #2ea043;
+    color: #fff;
+}
+
+.btn-toggle {
+    margin-bottom: 16px;
+    width: 100%;
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #8b949e;
+    border: 1px dashed #30363d;
+    background: transparent;
+}
+
+.btn-toggle:hover {
+    color: #c9d1d9;
+    border-color: #484f58;
+    background: #161b22;
+}
+
+.btn-toggle.open {
+    border-style: solid;
+    color: #c9d1d9;
+    background: #161b22;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    margin-bottom: 0;
+}
+
 /* Summary bar */
 .summary-bar {
     display: flex;
-    gap: 16px;
-    padding: 16px 24px;
+    gap: 12px;
+    padding: 12px 24px;
     background: #161b22;
     border-bottom: 1px solid #30363d;
+    flex-wrap: wrap;
 }
 
 .summary-card {
-    padding: 12px 20px;
+    padding: 10px 16px;
     border-radius: 8px;
     border: 1px solid #30363d;
     background: #0d1117;
-    min-width: 120px;
+    min-width: 90px;
     text-align: center;
+    transition: all 0.15s;
+}
+
+.summary-card.clickable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.summary-card.clickable:hover {
+    border-color: #484f58;
+}
+
+.summary-card.clickable:not(.active) {
+    opacity: 0.4;
 }
 
 .summary-card .label {
@@ -96,11 +165,11 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #8b949e;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 .summary-card .value {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 700;
 }
 
@@ -111,13 +180,13 @@ body {
 
 /* Main content */
 .main {
-    max-width: 1200px;
+    max-width: 1400px;
     margin: 0 auto;
-    padding: 24px;
+    padding: 20px;
 }
 
 .section-title {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -127,11 +196,11 @@ body {
     border-bottom: 1px solid #21262d;
 }
 
-/* Match cards */
+/* Match cards — grid layout */
 .matches-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
     margin-bottom: 32px;
 }
 
@@ -139,11 +208,10 @@ body {
     background: #161b22;
     border: 1px solid #30363d;
     border-radius: 8px;
-    padding: 16px 20px;
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 16px;
-    align-items: center;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     transition: border-color 0.15s;
 }
 
@@ -153,6 +221,7 @@ body {
 
 .match-card.signal-BUY {
     border-left: 3px solid #3fb950;
+    background: rgba(63, 185, 80, 0.04);
 }
 
 .match-card.signal-WAIT {
@@ -161,18 +230,25 @@ body {
 
 .match-card.signal-SKIP {
     border-left: 3px solid #484f58;
-    opacity: 0.65;
+    opacity: 0.6;
+}
+
+/* Card top row: badge + players */
+.card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 /* Signal badge */
 .signal-badge {
-    width: 60px;
-    padding: 6px 0;
+    padding: 4px 10px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     text-align: center;
     letter-spacing: 0.5px;
+    flex-shrink: 0;
 }
 
 .signal-badge.BUY {
@@ -191,14 +267,8 @@ body {
 }
 
 /* Match info */
-.match-info {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
 .match-players {
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
     color: #f0f6fc;
 }
@@ -209,47 +279,48 @@ body {
 
 .match-meta {
     display: flex;
-    gap: 12px;
-    font-size: 12px;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 11px;
     color: #8b949e;
 }
 
 .match-meta .tag {
-    padding: 2px 8px;
-    border-radius: 12px;
+    padding: 2px 7px;
+    border-radius: 10px;
     background: #21262d;
     border: 1px solid #30363d;
 }
 
 .match-detail {
-    font-size: 13px;
+    font-size: 12px;
     color: #8b949e;
-    margin-top: 2px;
 }
 
-/* Price section */
+/* Price row */
 .match-prices {
     display: flex;
-    gap: 20px;
+    gap: 16px;
     align-items: center;
-    text-align: center;
+    padding-top: 8px;
+    border-top: 1px solid #21262d;
 }
 
 .price-block {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
 }
 
 .price-block .label {
-    font-size: 10px;
+    font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #8b949e;
 }
 
 .price-block .price {
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 700;
 }
 
@@ -273,9 +344,9 @@ body {
 .manual-panel {
     background: #161b22;
     border: 1px solid #30363d;
-    border-radius: 8px;
+    border-radius: 0 0 8px 8px;
     padding: 20px;
-    margin-bottom: 32px;
+    margin-bottom: 24px;
 }
 
 .manual-panel h3 {
@@ -287,7 +358,7 @@ body {
 
 .form-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
     margin-bottom: 16px;
 }
@@ -357,18 +428,42 @@ body {
 }
 
 /* Responsive */
-@media (max-width: 768px) {
-    .match-card {
+@media (max-width: 900px) {
+    .matches-grid {
         grid-template-columns: 1fr;
-        gap: 12px;
+    }
+}
+
+@media (max-width: 600px) {
+    .header {
+        padding: 10px 16px;
+    }
+
+    .header h1 {
+        font-size: 16px;
+    }
+
+    .main {
+        padding: 12px;
     }
 
     .match-prices {
-        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: 12px;
     }
 
     .summary-bar {
-        flex-wrap: wrap;
+        gap: 8px;
+        padding: 10px 16px;
+    }
+
+    .summary-card {
+        min-width: 70px;
+        padding: 8px 10px;
+    }
+
+    .summary-card .value {
+        font-size: 18px;
     }
 
     .form-grid {
