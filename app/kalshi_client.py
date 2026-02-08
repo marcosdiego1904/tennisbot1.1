@@ -275,11 +275,17 @@ async def fetch_tennis_markets(
 
     async with httpx.AsyncClient() as client:
         # Dynamically discover all tennis series tickers
-        tennis_series = await _discover_tennis_series(client)
+        all_series = await _discover_tennis_series(client)
+
+        # For trading, only fetch match-winner markets (MATCH series)
+        # This filters out game markets, futures, field markets, etc.
+        match_series = [s for s in all_series if "MATCH" in s]
+        if not match_series:
+            match_series = list(_FALLBACK_SERIES)
 
         all_raw_markets = []
 
-        for series in tennis_series:
+        for series in match_series:
             try:
                 markets = await _kalshi_get_all(client, "/markets", params={
                     "status": "open",
@@ -412,7 +418,7 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
     debug_info["raw_markets_found"] = len(all_raw)
 
     # Try parsing and show results
-    for m in all_raw[:20]:
+    for m in all_raw[:100]:
         price = _get_market_price(m)
         result = _parse_market(m, {}, {})
         if result:
