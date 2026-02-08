@@ -2,7 +2,7 @@
 
 // --- State ---
 let allResults = [];
-let activeFilters = { BUY: true, WAIT: true, SKIP: false };
+let activeFilters = { BUY: true, WAIT: true, SKIP: false };  // WAIT kept for backwards compat
 let autoRefreshInterval = null;
 let countdownSeconds = 0;
 let countdownTimer = null;
@@ -328,20 +328,19 @@ function renderMatchCard(r) {
     // Price section
     let pricesHTML = "";
     if (!isSkip) {
-        const edgeClass = r.edge > 0 ? "positive" : "negative";
         pricesHTML = `
             <div class="match-prices">
                 <div class="price-block kalshi">
-                    <span class="label">Kalshi</span>
+                    <span class="label">Market</span>
                     <span class="price">${r.kalshi_price}¢</span>
                 </div>
                 <div class="price-block target">
-                    <span class="label">Target</span>
+                    <span class="label">Limit Order</span>
                     <span class="price">${r.target_price}¢</span>
                 </div>
                 <div class="price-block edge">
-                    <span class="label">Edge</span>
-                    <span class="price ${edgeClass}">${r.edge > 0 ? "+" : ""}${r.edge}¢</span>
+                    <span class="label">Spread</span>
+                    <span class="price">${r.edge.toFixed(1)}¢</span>
                 </div>
             </div>`;
     }

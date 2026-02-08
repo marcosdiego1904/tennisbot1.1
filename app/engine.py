@@ -5,8 +5,8 @@ System:
   TARGET = favorite_probability × Factor
   Factor = 0.70 + adjustments(tournament, surface, ranking_gap)
 
-  If Kalshi price < TARGET → BUY
-  If Kalshi price >= TARGET → WAIT
+  TARGET is the limit order price to place on Kalshi's order book.
+  If match passes all filters → BUY (place limit order at TARGET)
   Various conditions → SKIP
 """
 
@@ -70,7 +70,8 @@ def calculate_factor(
 def analyze_match(match: MatchData) -> AnalysisResult:
     """
     Run the full decision engine on a single match.
-    Returns an AnalysisResult with signal, target, and reasoning.
+    TARGET = the limit order price to set on Kalshi.
+    If match passes filters → BUY (place order at TARGET).
     """
 
     # --- Filters (SKIP conditions) ---
@@ -111,23 +112,19 @@ def analyze_match(match: MatchData) -> AnalysisResult:
             skip_reason=f"Volume ${match.volume:,.0f} < ${MIN_VOLUME:,.0f} minimum",
         )
 
-    # --- Calculate target ---
+    # --- Calculate target (limit order price) ---
     gap_for_calc = ranking_gap if ranking_gap is not None else 0
     factor = calculate_factor(match.tournament_level, match.surface, gap_for_calc)
     target = round(match.fav_probability * factor, 4)
 
-    # --- Signal ---
-    kalshi_decimal = match.kalshi_price / 100.0  # cents → decimal
-    edge = target - kalshi_decimal
+    # Edge = how far the current market is from our limit order
+    kalshi_decimal = match.kalshi_price / 100.0
+    edge = kalshi_decimal - target  # positive = market above our order
 
-    if kalshi_decimal <= target:
-        signal = Signal.BUY
-    else:
-        signal = Signal.WAIT
-
+    # All matches passing filters get BUY signal (place limit order at TARGET)
     return AnalysisResult(
         match=match,
-        signal=signal,
+        signal=Signal.BUY,
         target_price=target,
         factor=factor,
         ranking_gap=ranking_gap,
@@ -136,10 +133,10 @@ def analyze_match(match: MatchData) -> AnalysisResult:
 
 
 def analyze_all(matches: list[MatchData]) -> list[AnalysisResult]:
-    """Analyze a batch of matches. Returns list sorted: BUY first, then WAIT, then SKIP."""
+    """Analyze a batch of matches. BUY first (sorted by tightest spread), then SKIP."""
     results = [analyze_match(m) for m in matches]
     order = {Signal.BUY: 0, Signal.WAIT: 1, Signal.SKIP: 2}
-    results.sort(key=lambda r: order.get(r.signal, 3))
+    results.sort(key=lambda r: (order.get(r.signal, 3), r.edge if r.edge is not None else 999))
     return results
 
 
