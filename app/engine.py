@@ -115,7 +115,7 @@ def analyze_match(match: MatchData) -> AnalysisResult:
     # --- Calculate target (limit order price) ---
     gap_for_calc = ranking_gap if ranking_gap is not None else 0
     factor = calculate_factor(match.tournament_level, match.surface, gap_for_calc)
-    target = round(match.fav_probability * factor, 4)
+    target = round(match.fav_probability * factor, 2)
 
     # Edge = how far the current market is from our limit order
     kalshi_decimal = match.kalshi_price / 100.0

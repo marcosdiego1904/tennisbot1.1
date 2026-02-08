@@ -54,9 +54,24 @@ function applyFilters() {
 
     if (filtered.length === 0) return;
 
-    container.innerHTML = '<div class="matches-grid">'
-        + filtered.map(renderMatchCard).join("")
-        + '</div>';
+    // Group by tournament
+    const groups = {};
+    for (const r of filtered) {
+        const key = r.tournament || "Unknown";
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(r);
+    }
+
+    let html = "";
+    for (const [tournament, matches] of Object.entries(groups)) {
+        const level = matches[0].tournament_level || "";
+        html += `<div class="tournament-group">`;
+        html += `<div class="tournament-header"><span class="tournament-name">${tournament}</span><span class="tournament-level">${level}</span></div>`;
+        html += `<div class="matches-grid">${matches.map(renderMatchCard).join("")}</div>`;
+        html += `</div>`;
+    }
+
+    container.innerHTML = html;
 }
 
 

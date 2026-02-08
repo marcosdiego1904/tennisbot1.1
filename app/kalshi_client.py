@@ -292,6 +292,9 @@ async def fetch_tennis_markets(
                     "series_ticker": series,
                     "limit": 100,
                 })
+                # Tag each market with its series ticker for classification
+                for m in markets:
+                    m["_series_ticker"] = series
                 all_raw_markets.extend(markets)
             except httpx.HTTPStatusError:
                 continue
@@ -517,9 +520,10 @@ def _parse_market(
     fav_ranking = _lookup_ranking(fav_name, rankings)
     dog_ranking = _lookup_ranking(dog_name, rankings)
 
-    # Classify tournament — use rules_primary which has tournament info
+    # Classify tournament — use rules_primary + series ticker for tournament info
+    series_ticker = market.get("_series_ticker", "")
     tournament_level, surface, tournament_name = _classify_tournament(
-        f"{title} {rules} {event_ticker}", tournament_db
+        f"{title} {rules} {event_ticker}", tournament_db, series_ticker
     )
 
     return MatchData(
@@ -638,9 +642,11 @@ def _lookup_ranking(player_name: str, rankings: dict) -> Optional[int]:
 def _classify_tournament(
     text: str,
     tournament_db: dict,
+    series_ticker: str = "",
 ) -> tuple[TournamentLevel, Surface, str]:
     """Classify tournament from any available text."""
     title_lower = text.lower()
+    ticker_upper = series_ticker.upper()
 
     # Check tournament_db first
     for name, info in tournament_db.items():
@@ -651,10 +657,13 @@ def _classify_tournament(
                 name,
             )
 
-    # Keyword fallback
+    # Use series ticker for reliable level detection
+    # Tickers: KXATPMATCH, KXWTAMATCH, KXATPCHALLENGERMATCH, KXWTACHALLENGERMATCH, etc.
     level = TournamentLevel.ATP
-    if "challenger" in title_lower:
+    if "CHALLENGER" in ticker_upper:
         level = TournamentLevel.CHALLENGER
+    elif "WTA" in ticker_upper:
+        level = TournamentLevel.WTA
     elif "grand slam" in title_lower or any(
         gs in title_lower
         for gs in ["australian open", "roland garros", "french open", "wimbledon", "us open"]

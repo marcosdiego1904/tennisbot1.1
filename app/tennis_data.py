@@ -1,36 +1,37 @@
 """
-Tennis data client — fetches rankings and tournament info from api-tennis.com
+Tennis data client — fetches rankings from Jeff Sackmann's open-source
+GitHub repositories (tennis_atp / tennis_wta).
 
-API docs: https://api-tennis.com/documentation
-Base URL: https://api.api-tennis.com/tennis/
-Auth: API key as query parameter (?APIkey=YOUR_KEY)
-Endpoints used:
-  - get_standings  (ATP/WTA rankings)
-  - get_fixtures   (upcoming matches)
+Data source: https://github.com/JeffSackmann/tennis_atp
+             https://github.com/JeffSackmann/tennis_wta
+
+CSV format (rankings):  ranking_date, rank, player_id, points
+CSV format (players):   player_id, name_first, name_last, hand, dob, ioc, height, wikidata_id
 """
 
-import os
+import csv
+import io
 import json
 import httpx
 from pathlib import Path
 from datetime import datetime, timedelta
 
-API_TENNIS_KEY = os.getenv("API_TENNIS_KEY", "")
-API_TENNIS_BASE = "https://api.api-tennis.com/tennis/"
+# GitHub raw URLs for Sackmann data
+SACKMANN_ATP_RANKINGS = "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_rankings_current.csv"
+SACKMANN_ATP_PLAYERS = "https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_players.csv"
+SACKMANN_WTA_RANKINGS = "https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_rankings_current.csv"
+SACKMANN_WTA_PLAYERS = "https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_players.csv"
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 RANKINGS_CACHE = DATA_DIR / "rankings_cache.json"
 CACHE_TTL_HOURS = 24  # rankings update weekly, cache for a day
 
 
-def _base_params() -> dict:
-    return {"APIkey": API_TENNIS_KEY}
-
-
 async def fetch_rankings(force_refresh: bool = False) -> dict[str, int]:
     """
-    Fetch ATP + WTA rankings. Returns dict of {player_name_lower: ranking}.
-    Uses local cache to avoid burning API calls.
+    Fetch ATP + WTA rankings from Sackmann GitHub CSVs.
+    Returns dict of {player_name_lower: ranking}.
+    Uses local cache to avoid re-downloading on every request.
     """
     if not force_refresh and _cache_is_valid():
         return _load_cache()
@@ -38,86 +39,96 @@ async def fetch_rankings(force_refresh: bool = False) -> dict[str, int]:
     rankings = {}
 
     async with httpx.AsyncClient() as client:
-        # Fetch both ATP and WTA
-        for event_type in ["ATP", "WTA"]:
-            result = await _fetch_standings(client, event_type)
-            rankings.update(result)
+        # Fetch ATP
+        atp = await _fetch_sackmann_rankings(client, SACKMANN_ATP_RANKINGS, SACKMANN_ATP_PLAYERS)
+        rankings.update(atp)
 
-    _save_cache(rankings)
+        # Fetch WTA
+        wta = await _fetch_sackmann_rankings(client, SACKMANN_WTA_RANKINGS, SACKMANN_WTA_PLAYERS)
+        rankings.update(wta)
+
+    if rankings:
+        _save_cache(rankings)
+
     return rankings
 
 
-async def _fetch_standings(client: httpx.AsyncClient, event_type: str) -> dict[str, int]:
-    """Fetch rankings from api-tennis.com using get_standings."""
+async def _fetch_sackmann_rankings(
+    client: httpx.AsyncClient,
+    rankings_url: str,
+    players_url: str,
+) -> dict[str, int]:
+    """
+    Download rankings + players CSVs from GitHub, join them,
+    and return {name_lower: rank} dict.
+    """
     rankings = {}
 
     try:
-        params = _base_params()
-        params["method"] = "get_standings"
-        params["event_type"] = event_type
+        # Fetch both files in sequence (players first, then rankings)
+        players_resp = await client.get(players_url, timeout=20.0)
+        players_resp.raise_for_status()
 
-        resp = await client.get(
-            API_TENNIS_BASE,
-            params=params,
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        rankings_resp = await client.get(rankings_url, timeout=20.0)
+        rankings_resp.raise_for_status()
 
-        results = data.get("result", [])
-        for entry in results:
-            name = entry.get("player", "")
-            ranking = entry.get("place", None)
+        # Parse players CSV → {player_id: "first last"}
+        player_names = {}
+        reader = csv.DictReader(io.StringIO(players_resp.text))
+        for row in reader:
+            pid = row.get("player_id", "").strip()
+            first = row.get("name_first", "").strip()
+            last = row.get("name_last", "").strip()
+            if pid and last:
+                full = f"{first} {last}".strip()
+                player_names[pid] = full
 
-            if not name or not ranking:
+        # Parse rankings CSV — get the most recent date's rankings
+        reader = csv.DictReader(io.StringIO(rankings_resp.text))
+        rows = list(reader)
+
+        if not rows:
+            return rankings
+
+        # Find the most recent ranking_date
+        latest_date = max(row.get("ranking_date", "") for row in rows)
+
+        # Filter to only the latest date
+        for row in rows:
+            if row.get("ranking_date") != latest_date:
+                continue
+
+            pid = row.get("player", "").strip()
+            rank_str = row.get("rank", "").strip()
+
+            if not pid or not rank_str:
                 continue
 
             try:
-                rank_int = int(ranking)
+                rank_int = int(rank_str)
             except (ValueError, TypeError):
                 continue
 
-            # Store by last name and full name (lowercase) for matching
-            full_name = name.strip().lower()
-            last_name = full_name.split()[-1] if full_name else ""
+            name = player_names.get(pid, "")
+            if not name:
+                continue
 
-            if full_name:
-                rankings[full_name] = rank_int
-            if last_name:
-                rankings[last_name] = rank_int
+            # Store by full name and last name (lowercase) for flexible matching
+            full_lower = name.lower()
+            last_lower = name.split()[-1].lower() if name.split() else ""
+
+            if full_lower:
+                rankings[full_lower] = rank_int
+            if last_lower:
+                rankings[last_lower] = rank_int
 
     except (httpx.HTTPError, KeyError, ValueError) as e:
-        print(f"Warning: Could not fetch {event_type} rankings from api-tennis.com: {e}")
+        label = "ATP" if "atp" in rankings_url else "WTA"
+        print(f"Warning: Could not fetch {label} rankings from Sackmann GitHub: {e}")
         if RANKINGS_CACHE.exists():
             return _load_cache()
 
     return rankings
-
-
-async def fetch_fixtures(date_start: str, date_stop: str) -> list[dict]:
-    """
-    Fetch upcoming matches from api-tennis.com.
-    Dates in yyyy-mm-dd format.
-    Returns raw fixture list.
-    """
-    async with httpx.AsyncClient() as client:
-        params = _base_params()
-        params["method"] = "get_fixtures"
-        params["date_start"] = date_start
-        params["date_stop"] = date_stop
-
-        try:
-            resp = await client.get(
-                API_TENNIS_BASE,
-                params=params,
-                timeout=15.0,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("result", [])
-        except (httpx.HTTPError, ValueError) as e:
-            print(f"Warning: Could not fetch fixtures from api-tennis.com: {e}")
-            return []
 
 
 # --- Cache helpers ---

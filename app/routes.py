@@ -89,49 +89,21 @@ async def get_rankings(refresh: bool = False):
 
 @router.get("/debug/rankings")
 async def debug_rankings():
-    """Debug: test api-tennis.com connection and show ranking matching."""
-    import httpx
-    from app.tennis_data import API_TENNIS_KEY, API_TENNIS_BASE, fetch_rankings
+    """Debug: test Sackmann GitHub rankings and show ranking matching."""
+    from app.tennis_data import fetch_rankings
     from app.kalshi_client import fetch_tennis_markets
 
     debug = {
-        "api_key_set": bool(API_TENNIS_KEY),
-        "api_key_preview": API_TENNIS_KEY[:8] + "..." if len(API_TENNIS_KEY) > 8 else "(empty or short)",
-        "api_base": API_TENNIS_BASE,
-        "raw_api_response": None,
-        "raw_api_error": None,
+        "source": "Jeff Sackmann GitHub CSVs (tennis_atp / tennis_wta)",
         "rankings_count": 0,
         "rankings_sample": {},
         "match_lookups": [],
     }
 
-    # Test raw API call
-    try:
-        async with httpx.AsyncClient() as client:
-            params = {"APIkey": API_TENNIS_KEY, "method": "get_standings", "event_type": "ATP"}
-            resp = await client.get(API_TENNIS_BASE, params=params, timeout=15.0)
-            debug["raw_api_status"] = resp.status_code
-            data = resp.json()
-
-            # Show structure of response
-            if isinstance(data, dict):
-                debug["raw_api_keys"] = list(data.keys())
-                results = data.get("result", [])
-                debug["raw_api_result_count"] = len(results) if isinstance(results, list) else str(type(results))
-                if isinstance(results, list) and len(results) > 0:
-                    debug["raw_api_first_entry"] = results[0]
-                    debug["raw_api_sample"] = results[:5]
-                elif isinstance(results, str):
-                    debug["raw_api_result_message"] = results
-            else:
-                debug["raw_api_response"] = str(data)[:500]
-    except Exception as e:
-        debug["raw_api_error"] = str(e)
-
     # Test rankings fetch
     rankings = await fetch_rankings(force_refresh=True)
     debug["rankings_count"] = len(rankings)
-    debug["rankings_sample"] = dict(list(rankings.items())[:20])
+    debug["rankings_sample"] = dict(list(rankings.items())[:30])
 
     # Test matching against Kalshi
     if rankings:
@@ -208,7 +180,7 @@ def _format_single(result: AnalysisResult) -> dict:
         "dog_name": m.player_dog.name,
         "fav_probability": round(m.fav_probability * 100, 1),
         "kalshi_price": m.kalshi_price,
-        "target_price": round(result.target_price * 100, 1) if result.target_price else None,
+        "target_price": int(round(result.target_price * 100)) if result.target_price else None,
         "factor": result.factor,
         "ranking_gap": result.ranking_gap,
         "edge": round(result.edge * 100, 1) if result.edge else None,
