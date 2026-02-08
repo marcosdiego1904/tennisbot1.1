@@ -44,7 +44,7 @@ GAP_ADJ_LARGE = 0.08     # gap > 100
 # Filters
 MIN_FAVORITE_PCT = 0.70
 MAX_FAVORITE_PCT = 0.92
-MIN_VOLUME = 20_000
+MIN_VOLUME = 100
 
 
 def calculate_factor(
