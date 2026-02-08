@@ -89,40 +89,75 @@ async def get_rankings(refresh: bool = False):
 
 @router.get("/debug/rankings")
 async def debug_rankings():
-    """Debug: show how Kalshi player names match against api-tennis rankings."""
-    rankings = await fetch_rankings()
-    tournament_db = load_tournament_db()
-
-    # Get some matches from Kalshi
-    try:
-        matches = await fetch_tennis_markets(rankings, tournament_db)
-    except Exception as e:
-        matches = []
+    """Debug: test api-tennis.com connection and show ranking matching."""
+    import httpx
+    from app.tennis_data import API_TENNIS_KEY, API_TENNIS_BASE, fetch_rankings
+    from app.kalshi_client import fetch_tennis_markets
 
     debug = {
-        "rankings_count": len(rankings),
-        "rankings_sample": dict(list(rankings.items())[:20]),
+        "api_key_set": bool(API_TENNIS_KEY),
+        "api_key_preview": API_TENNIS_KEY[:8] + "..." if len(API_TENNIS_KEY) > 8 else "(empty or short)",
+        "api_base": API_TENNIS_BASE,
+        "raw_api_response": None,
+        "raw_api_error": None,
+        "rankings_count": 0,
+        "rankings_sample": {},
         "match_lookups": [],
     }
 
-    for m in matches[:20]:
-        fav_name = m.player_fav.name
-        dog_name = m.player_dog.name
-        fav_lower = fav_name.lower()
-        dog_lower = dog_name.lower()
-        fav_last = fav_lower.split()[-1] if fav_lower.split() else ""
-        dog_last = dog_lower.split()[-1] if dog_lower.split() else ""
+    # Test raw API call
+    try:
+        async with httpx.AsyncClient() as client:
+            params = {"APIkey": API_TENNIS_KEY, "method": "get_standings", "event_type": "ATP"}
+            resp = await client.get(API_TENNIS_BASE, params=params, timeout=15.0)
+            debug["raw_api_status"] = resp.status_code
+            data = resp.json()
 
-        debug["match_lookups"].append({
-            "fav_name": fav_name,
-            "dog_name": dog_name,
-            "fav_full_match": rankings.get(fav_lower),
-            "fav_last_match": rankings.get(fav_last),
-            "dog_full_match": rankings.get(dog_lower),
-            "dog_last_match": rankings.get(dog_last),
-            "fav_ranking": m.player_fav.ranking,
-            "dog_ranking": m.player_dog.ranking,
-        })
+            # Show structure of response
+            if isinstance(data, dict):
+                debug["raw_api_keys"] = list(data.keys())
+                results = data.get("result", [])
+                debug["raw_api_result_count"] = len(results) if isinstance(results, list) else str(type(results))
+                if isinstance(results, list) and len(results) > 0:
+                    debug["raw_api_first_entry"] = results[0]
+                    debug["raw_api_sample"] = results[:5]
+                elif isinstance(results, str):
+                    debug["raw_api_result_message"] = results
+            else:
+                debug["raw_api_response"] = str(data)[:500]
+    except Exception as e:
+        debug["raw_api_error"] = str(e)
+
+    # Test rankings fetch
+    rankings = await fetch_rankings(force_refresh=True)
+    debug["rankings_count"] = len(rankings)
+    debug["rankings_sample"] = dict(list(rankings.items())[:20])
+
+    # Test matching against Kalshi
+    if rankings:
+        tournament_db = load_tournament_db()
+        try:
+            matches = await fetch_tennis_markets(rankings, tournament_db)
+            for m in matches[:15]:
+                fav_name = m.player_fav.name
+                dog_name = m.player_dog.name
+                fav_lower = fav_name.lower()
+                dog_lower = dog_name.lower()
+                fav_last = fav_lower.split()[-1] if fav_lower.split() else ""
+                dog_last = dog_lower.split()[-1] if dog_lower.split() else ""
+
+                debug["match_lookups"].append({
+                    "fav": fav_name,
+                    "dog": dog_name,
+                    "fav_rank": m.player_fav.ranking,
+                    "dog_rank": m.player_dog.ranking,
+                    "fav_full": rankings.get(fav_lower),
+                    "fav_last": rankings.get(fav_last),
+                    "dog_full": rankings.get(dog_lower),
+                    "dog_last": rankings.get(dog_last),
+                })
+        except Exception as e:
+            debug["kalshi_error"] = str(e)
 
     return debug
 
