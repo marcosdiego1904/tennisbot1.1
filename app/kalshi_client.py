@@ -404,6 +404,11 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
                     "yes_ask": m.get("yes_ask"),
                     "volume": m.get("volume"),
                     "rules": m.get("rules_primary", "")[:200],
+                    "close_time": m.get("close_time"),
+                    "expiration_time": m.get("expiration_time"),
+                    "expected_expiration_time": m.get("expected_expiration_time"),
+                    "open_time": m.get("open_time"),
+                    "all_keys": list(m.keys()),
                 }
             if markets:
                 entry["first_title"] = markets[0].get("title", "")
@@ -530,7 +535,7 @@ def _parse_market(
         volume=volume,
         kalshi_ticker=market.get("ticker"),
         kalshi_event_ticker=event_ticker,
-        close_time=market.get("close_time"),
+        close_time=market.get("expected_expiration_time") or market.get("expiration_time") or market.get("close_time"),
     )
 
 
