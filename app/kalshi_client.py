@@ -263,14 +263,12 @@ def _get_market_price(market: dict) -> Optional[int]:
 
 
 async def fetch_tennis_markets(
-    rankings: Optional[dict] = None,
     tournament_db: Optional[dict] = None,
 ) -> list[MatchData]:
     """
     Main entry point: fetch all open tennis markets from Kalshi.
     Uses paginated fetch to get ALL markets, not just first 20.
     """
-    rankings = rankings or {}
     tournament_db = tournament_db or {}
 
     async with httpx.AsyncClient() as client:
@@ -312,7 +310,7 @@ async def fetch_tennis_markets(
         # Parse unique markets
         matches = []
         for market in events_seen.values():
-            match = _parse_market(market, rankings, tournament_db)
+            match = _parse_market(market, tournament_db)
             if match:
                 matches.append(match)
 
@@ -423,7 +421,7 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
     # Try parsing and show results
     for m in all_raw[:100]:
         price = _get_market_price(m)
-        result = _parse_market(m, {}, {})
+        result = _parse_market(m, {})
         if result:
             debug_info["parsed_ok"] += 1
             debug_info["parsed_matches"].append({
@@ -467,7 +465,6 @@ def _debug_parse_failure(market: dict) -> str:
 
 def _parse_market(
     market: dict,
-    rankings: dict,
     tournament_db: dict,
 ) -> Optional[MatchData]:
     """
@@ -516,10 +513,6 @@ def _parse_market(
         dog_name = yes_player or (player_a if yes_is_a else player_b)
         kalshi_price = 100 - price
 
-    # Look up rankings
-    fav_ranking = _lookup_ranking(fav_name, rankings)
-    dog_ranking = _lookup_ranking(dog_name, rankings)
-
     # Classify tournament — use rules_primary + series ticker for tournament info
     series_ticker = market.get("_series_ticker", "")
     tournament_level, surface, tournament_name = _classify_tournament(
@@ -527,8 +520,8 @@ def _parse_market(
     )
 
     return MatchData(
-        player_fav=PlayerInfo(name=fav_name, ranking=fav_ranking),
-        player_dog=PlayerInfo(name=dog_name, ranking=dog_ranking),
+        player_fav=PlayerInfo(name=fav_name),
+        player_dog=PlayerInfo(name=dog_name),
         fav_probability=fav_prob,
         kalshi_price=kalshi_price,
         tournament_name=tournament_name,
@@ -537,6 +530,7 @@ def _parse_market(
         volume=volume,
         kalshi_ticker=market.get("ticker"),
         kalshi_event_ticker=event_ticker,
+        close_time=market.get("close_time"),
     )
 
 
@@ -619,24 +613,6 @@ def _name_matches(full_name: str, last_name: str) -> bool:
         return False
     return last_name.lower() in full_name.lower()
 
-
-def _lookup_ranking(player_name: str, rankings: dict) -> Optional[int]:
-    """Look up a player's ranking by trying multiple name formats."""
-    if not rankings:
-        return None
-
-    name_lower = player_name.lower()
-
-    if name_lower in rankings:
-        return rankings[name_lower]
-
-    parts = name_lower.split()
-    if parts:
-        last_name = parts[-1]
-        if last_name in rankings:
-            return rankings[last_name]
-
-    return None
 
 
 def _classify_tournament(

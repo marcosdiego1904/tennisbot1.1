@@ -225,6 +225,17 @@ body {
     color: #8b949e;
 }
 
+.match-time {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #1a1f35;
+    border: 1px solid #253258;
+    color: #79c0ff;
+    white-space: nowrap;
+}
+
 /* Match cards — grid layout */
 .matches-grid {
     display: grid;

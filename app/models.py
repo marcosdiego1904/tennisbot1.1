@@ -25,7 +25,6 @@ class Signal(str, Enum):
 @dataclass
 class PlayerInfo:
     name: str
-    ranking: Optional[int] = None
 
 
 @dataclass
@@ -41,6 +40,7 @@ class MatchData:
     volume: float                   # market volume in dollars
     kalshi_ticker: Optional[str] = None
     kalshi_event_ticker: Optional[str] = None
+    close_time: Optional[str] = None  # ISO 8601 market close time
 
 
 @dataclass
@@ -50,7 +50,6 @@ class AnalysisResult:
     signal: Signal
     target_price: Optional[float]   # our calculated target (0.0-1.0)
     factor: Optional[float]
-    ranking_gap: Optional[int]
     skip_reason: Optional[str] = None
     edge: Optional[float] = None    # target - kalshi_price (positive = value)
 

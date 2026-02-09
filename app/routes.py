@@ -4,7 +4,7 @@ API routes for the tennis trading dashboard.
 
 from fastapi import APIRouter, HTTPException
 from app.kalshi_client import fetch_tennis_markets
-from app.tennis_data import fetch_rankings, load_tournament_db
+from app.tennis_data import load_tournament_db
 from app.engine import analyze_all, analyze_match
 from app.models import (
     MatchData, AnalysisResult, Signal,
@@ -17,13 +17,11 @@ router = APIRouter(prefix="/api")
 @router.get("/analyze")
 async def analyze_markets():
     """
-    Main endpoint: fetch Kalshi markets, enrich with rankings,
-    run the engine, return analysis.
+    Main endpoint: fetch Kalshi markets, run the engine, return analysis.
     """
     try:
-        rankings = await fetch_rankings()
         tournament_db = load_tournament_db()
-        matches = await fetch_tennis_markets(rankings, tournament_db)
+        matches = await fetch_tennis_markets(tournament_db)
 
         if not matches:
             return {
@@ -48,14 +46,8 @@ async def analyze_manual(payload: dict):
     """
     try:
         match = MatchData(
-            player_fav=PlayerInfo(
-                name=payload["fav_name"],
-                ranking=payload.get("fav_ranking"),
-            ),
-            player_dog=PlayerInfo(
-                name=payload["dog_name"],
-                ranking=payload.get("dog_ranking"),
-            ),
+            player_fav=PlayerInfo(name=payload["fav_name"]),
+            player_dog=PlayerInfo(name=payload["dog_name"]),
             fav_probability=payload["fav_probability"] / 100.0,
             kalshi_price=payload["kalshi_price"],
             tournament_name=payload.get("tournament_name", "Unknown"),
@@ -69,69 +61,6 @@ async def analyze_manual(payload: dict):
 
     except (KeyError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid input: {e}")
-
-
-@router.get("/rankings")
-async def get_rankings(refresh: bool = False):
-    """Get current cached rankings. Pass ?refresh=true to force update."""
-    rankings = await fetch_rankings(force_refresh=refresh)
-
-    # Also show sample of player names for debugging matching issues
-    sample = dict(list(rankings.items())[:30])
-
-    return {
-        "status": "ok",
-        "count": len(rankings),
-        "sample": sample,
-        "rankings": rankings,
-    }
-
-
-@router.get("/debug/rankings")
-async def debug_rankings():
-    """Debug: test Sackmann GitHub rankings and show ranking matching."""
-    from app.tennis_data import fetch_rankings
-    from app.kalshi_client import fetch_tennis_markets
-
-    debug = {
-        "source": "Jeff Sackmann GitHub CSVs (tennis_atp / tennis_wta)",
-        "rankings_count": 0,
-        "rankings_sample": {},
-        "match_lookups": [],
-    }
-
-    # Test rankings fetch
-    rankings = await fetch_rankings(force_refresh=True)
-    debug["rankings_count"] = len(rankings)
-    debug["rankings_sample"] = dict(list(rankings.items())[:30])
-
-    # Test matching against Kalshi
-    if rankings:
-        tournament_db = load_tournament_db()
-        try:
-            matches = await fetch_tennis_markets(rankings, tournament_db)
-            for m in matches[:15]:
-                fav_name = m.player_fav.name
-                dog_name = m.player_dog.name
-                fav_lower = fav_name.lower()
-                dog_lower = dog_name.lower()
-                fav_last = fav_lower.split()[-1] if fav_lower.split() else ""
-                dog_last = dog_lower.split()[-1] if dog_lower.split() else ""
-
-                debug["match_lookups"].append({
-                    "fav": fav_name,
-                    "dog": dog_name,
-                    "fav_rank": m.player_fav.ranking,
-                    "dog_rank": m.player_dog.ranking,
-                    "fav_full": rankings.get(fav_lower),
-                    "fav_last": rankings.get(fav_last),
-                    "dog_full": rankings.get(dog_lower),
-                    "dog_last": rankings.get(dog_last),
-                })
-        except Exception as e:
-            debug["kalshi_error"] = str(e)
-
-    return debug
 
 
 @router.get("/debug/kalshi")
@@ -182,12 +111,12 @@ def _format_single(result: AnalysisResult) -> dict:
         "kalshi_price": m.kalshi_price,
         "target_price": int(round(result.target_price * 100)) if result.target_price else None,
         "factor": result.factor,
-        "ranking_gap": result.ranking_gap,
         "edge": round(result.edge * 100, 1) if result.edge else None,
         "tournament": m.tournament_name,
         "tournament_level": m.tournament_level.value,
         "surface": m.surface.value,
         "volume": m.volume,
+        "close_time": m.close_time,
         "skip_reason": result.skip_reason,
         "summary": result.summary,
         "ticker": m.kalshi_ticker,
