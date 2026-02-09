@@ -54,9 +54,24 @@ function applyFilters() {
 
     if (filtered.length === 0) return;
 
-    container.innerHTML = '<div class="matches-grid">'
-        + filtered.map(renderMatchCard).join("")
-        + '</div>';
+    // Group by tournament
+    const groups = {};
+    for (const r of filtered) {
+        const key = r.tournament || "Unknown";
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(r);
+    }
+
+    let html = "";
+    for (const [tournament, matches] of Object.entries(groups)) {
+        const level = matches[0].tournament_level || "";
+        html += `<div class="tournament-group">`;
+        html += `<div class="tournament-header"><span class="tournament-name">${tournament}</span><span class="tournament-level">${level}</span></div>`;
+        html += `<div class="matches-grid">${matches.map(renderMatchCard).join("")}</div>`;
+        html += `</div>`;
+    }
+
+    container.innerHTML = html;
 }
 
 
@@ -145,8 +160,6 @@ async function analyzeManual() {
         dog_name: document.getElementById("mDogName").value,
         fav_probability: parseFloat(document.getElementById("mFavPct").value),
         kalshi_price: parseFloat(document.getElementById("mKalshiPrice").value),
-        fav_ranking: parseInt(document.getElementById("mFavRank").value) || null,
-        dog_ranking: parseInt(document.getElementById("mDogRank").value) || null,
         tournament_level: document.getElementById("mTournament").value,
         surface: document.getElementById("mSurface").value,
         volume: parseFloat(document.getElementById("mVolume").value) || 50000,
@@ -198,14 +211,17 @@ function renderResults(data) {
         return;
     }
 
-    // Sort: BUY first, then WAIT sorted by edge desc, then SKIP
+    // Sort: BUY first, then WAIT, then SKIP — within each, soonest match first
     const order = { BUY: 0, WAIT: 1, SKIP: 2 };
     allResults = data.results.sort((a, b) => {
         const oa = order[a.signal] ?? 3;
         const ob = order[b.signal] ?? 3;
         if (oa !== ob) return oa - ob;
-        // Within same signal, sort by edge descending (best opportunity first)
-        return (b.edge || -999) - (a.edge || -999);
+        // Within same signal, sort by close_time ascending (soonest first)
+        const ta = a.close_time || "9999";
+        const tb = b.close_time || "9999";
+        if (ta !== tb) return ta < tb ? -1 : 1;
+        return 0;
     });
 
     applyFilters();
@@ -345,11 +361,33 @@ function renderMatchCard(r) {
             </div>`;
     }
 
+    // Time display
+    let timeHTML = "";
+    if (r.close_time) {
+        const ct = new Date(r.close_time);
+        const now = new Date();
+        const diffMs = ct - now;
+        const diffH = Math.floor(diffMs / 3600000);
+        const diffM = Math.floor((diffMs % 3600000) / 60000);
+
+        let timeLabel;
+        if (diffMs < 0) {
+            timeLabel = "Live";
+        } else if (diffH < 1) {
+            timeLabel = `${diffM}m`;
+        } else if (diffH < 24) {
+            timeLabel = `${diffH}h ${diffM}m`;
+        } else {
+            const days = Math.floor(diffH / 24);
+            timeLabel = `${days}d ${diffH % 24}h`;
+        }
+        timeHTML = `<span class="match-time">${timeLabel}</span>`;
+    }
+
     // Meta tags
     const tags = [];
     if (r.surface) tags.push(r.surface);
     if (r.tournament_level) tags.push(r.tournament_level);
-    if (r.ranking_gap !== null && r.ranking_gap !== undefined) tags.push(`Gap: ${r.ranking_gap}`);
     if (r.factor) tags.push(`Factor: ${r.factor}`);
 
     const tagsHTML = tags.map(t => `<span class="tag">${t}</span>`).join("");
@@ -369,6 +407,7 @@ function renderMatchCard(r) {
                 <div class="match-players">
                     <span class="fav">${r.fav_name}</span> vs ${r.dog_name}
                 </div>
+                ${timeHTML}
             </div>
             <div class="match-meta">${tagsHTML}</div>
             ${detailHTML}
