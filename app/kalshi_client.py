@@ -420,6 +420,12 @@ async def debug_fetch(client: httpx.AsyncClient) -> dict:
 
     if all_raw:
         debug_info["full_market_dump"] = all_raw[0]
+        # Show all time-related fields from first market
+        first = all_raw[0]
+        debug_info["time_fields"] = {
+            k: v for k, v in first.items()
+            if any(t in k.lower() for t in ["time", "date", "expir", "close", "open", "sched"])
+        }
 
     debug_info["raw_markets_found"] = len(all_raw)
 
