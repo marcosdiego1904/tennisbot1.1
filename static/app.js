@@ -304,6 +304,16 @@ async function fetchDebug() {
         // Total
         html += `<p style="margin:12px 0;"><strong>Total raw markets:</strong> ${data.raw_markets_found || 0}</p>`;
 
+        // Time fields diagnostic
+        if (data.time_fields) {
+            html += '<h4 style="color: #d29922; margin: 12px 0 8px;">Time Fields (first market)</h4>';
+            html += '<div style="background:#0d1117; padding:8px; border-radius:4px; font-size:12px;">';
+            for (const [k, v] of Object.entries(data.time_fields)) {
+                html += `<p style="margin:2px 0;"><strong>${k}:</strong> <span style="color:#79c0ff;">${v}</span></p>`;
+            }
+            html += '</div>';
+        }
+
         // Parse results
         html += `<h4 style="color: #58a6ff; margin: 12px 0 8px;">5. Parsing Results</h4>`;
         html += `<p>OK: <strong style="color:#3fb950;">${data.parsed_ok || 0}</strong> | Failed: <strong style="color:#f85149;">${(data.parse_failures || []).length}</strong></p>`;
