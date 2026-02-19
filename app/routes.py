@@ -10,6 +10,8 @@ from app.models import (
     MatchData, AnalysisResult, Signal,
     PlayerInfo, TournamentLevel, Surface,
 )
+from app.automation import run_automation_cycle, get_status, get_all_orders
+from app.scheduler import start_automation, stop_automation, scheduler_state
 
 router = APIRouter(prefix="/api")
 
@@ -82,6 +84,71 @@ async def debug_kalshi():
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "tennisbot"}
+
+
+# ---------------------------------------------------------------------------
+# Automation endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/automation/status")
+async def automation_status():
+    """
+    Returns current automation state:
+    - Whether the scheduler is running and next run time
+    - DRY_RUN mode
+    - Last cycle summary (signals found, orders placed, Matchstat results)
+    - Session order count
+    """
+    return {
+        "scheduler": scheduler_state(),
+        "automation": get_status(),
+    }
+
+
+@router.post("/automation/start")
+async def automation_start():
+    """
+    Start the automated workflow.
+    Runs one cycle immediately, then repeats every AUTOMATION_INTERVAL_MINUTES.
+    Safe to call multiple times — replaces existing job.
+    """
+    try:
+        result = await start_automation()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/automation/stop")
+async def automation_stop():
+    """Stop the automation scheduler (does not cancel already-placed orders)."""
+    return stop_automation()
+
+
+@router.post("/automation/run")
+async def automation_run_once():
+    """
+    Manually trigger one automation cycle without affecting the scheduler.
+    Useful for testing before enabling the automatic schedule.
+    """
+    try:
+        summary = await run_automation_cycle()
+        return summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/automation/orders")
+async def automation_orders():
+    """
+    Return the log of all processed orders (placed, simulated, and rejected).
+    Newest first, max 200 records.
+    """
+    try:
+        orders = await get_all_orders()
+        return {"orders": orders, "count": len(orders)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def _format_results(results: list[AnalysisResult]) -> dict:
