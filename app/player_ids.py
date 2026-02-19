@@ -22,11 +22,18 @@ ID structure findings (from scanning):
   The database appears to have been seeded in one batch for that era, then a
   gap, then a new batch for modern players at an unknown higher range.
 
-  Next ranges to try to find Tiafoe (pro 2015), Sinner (pro 2018), etc.:
-    /api/debug/matchstat/scan?start=15000&count=100
-    /api/debug/matchstat/scan?start=20000&count=100
-    /api/debug/matchstat/scan?start=30000&count=100
-    /api/debug/matchstat/scan?start=50000&count=100
+  CONCLUSION: the /player/profile/{id} endpoint only covers IDs ~5900-6600
+  (players who entered the circuit ~2003-2006). Ranges 7000-50000+ are all
+  empty. Modern players (Tiafoe, Sinner, Alcaraz…) are NOT accessible via
+  this endpoint.
+
+  Alternative being tested via GET /api/debug/matchstat?fav=Tiafoe&dog=Svajda:
+    - Rankings endpoints (may return current player IDs)
+    - Live/schedule endpoints (may include player IDs with names)
+    - H2H endpoint with player names/slugs instead of numeric IDs
+
+  If no alternative works, H2H confirmation is limited to players in this map.
+  The bot still functions — it simply skips H2H for unknown players.
 
 Known IDs:
   5917  = Gael Monfils    (confirmed Active, scan 5900-5999)
