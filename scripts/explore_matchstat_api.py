@@ -1,164 +1,202 @@
 """
 Script de exploración de la Matchstat API (via RapidAPI).
 
-Ejecuta este script EN TU MÁQUINA LOCAL (no en el servidor):
+Ejecuta este script EN TU MÁQUINA LOCAL:
     python scripts/explore_matchstat_api.py
 
-Lo que hace:
-  1. Prueba endpoints comunes para encontrar cuál devuelve predicciones/ganadores
-  2. Imprime el JSON completo de cada respuesta exitosa
-  3. Te dice qué campos contienen win probability / ganador predicho
-
-Una vez que sepas cuál endpoint funciona y qué estructura devuelve,
-actualiza app/matchstat_client.py con ese endpoint y el parsing correcto.
+Prueba los endpoints conocidos con datos reales y muestra el JSON completo
+para que podamos mapear el parsing correcto en matchstat_client.py.
 """
 
 import http.client
 import json
-import sys
 
-API_KEY = "563ea39f66msh0512ba3143fdccfp1bb39fjsnde81db4498b1"
-HOST = "tennis-api-atp-wta-itf.p.rapidapi.com"
-
-HEADERS = {
-    "x-rapidapi-key": API_KEY,
+API_KEY  = "563ea39f66msh0512ba3143fdccfp1bb39fjsnde81db4498b1"
+HOST     = "tennis-api-atp-wta-itf.p.rapidapi.com"
+HEADERS  = {
+    "x-rapidapi-key":  API_KEY,
     "x-rapidapi-host": HOST,
 }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
 def get(path: str) -> tuple[int, dict | list | None]:
-    """Make a GET request and return (status_code, parsed_json)."""
     conn = http.client.HTTPSConnection(HOST, timeout=10)
     try:
         conn.request("GET", path, headers=HEADERS)
-        res = conn.getresponse()
-        raw = res.read().decode("utf-8")
+        res  = conn.getresponse()
+        raw  = res.read().decode("utf-8")
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            data = {"raw": raw[:500]}
+            data = {"_raw": raw[:500]}
         return res.status, data
     except Exception as e:
-        return 0, {"error": str(e)}
+        return 0, {"_error": str(e)}
     finally:
         conn.close()
 
 
-def pretty(data, max_chars=3000):
+def section(title: str):
+    print(f"\n{'='*65}")
+    print(f"  {title}")
+    print("=" * 65)
+
+
+def show(data, max_chars=4000):
     txt = json.dumps(data, indent=2, ensure_ascii=False)
     if len(txt) > max_chars:
-        txt = txt[:max_chars] + "\n  ... (truncated)"
-    return txt
+        txt = txt[:max_chars] + "\n  ...(truncado)"
+    print(txt)
 
 
-def section(title: str):
-    print(f"\n{'='*60}")
-    print(f"  {title}")
-    print("=" * 60)
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. SEARCH — obtener player IDs para dos jugadores reales
+# ─────────────────────────────────────────────────────────────────────────────
+section("1. SEARCH — buscar jugadores para obtener sus IDs")
 
+# Cambia estos nombres por los del partido que estés analizando ahora
+PLAYER_FAV = "Sinner"
+PLAYER_DOG = "Medvedev"
 
-# ---------------------------------------------------------------------------
-# 1. Known endpoint — search
-# ---------------------------------------------------------------------------
-section("1. /tennis/v2/search?search=Sinner")
-status, data = get("/tennis/v2/search?search=Sinner")
-print(f"Status: {status}")
-print(pretty(data))
+player_ids: dict[str, int | None] = {PLAYER_FAV: None, PLAYER_DOG: None}
 
-# ---------------------------------------------------------------------------
-# 2. Discover available endpoints — common patterns
-# ---------------------------------------------------------------------------
-CANDIDATES = [
-    # Predictions / odds
-    "/tennis/v2/predictions",
-    "/tennis/v2/odds",
-    "/tennis/v2/predictions/today",
-    "/tennis/v2/matches/predictions",
+for name in [PLAYER_FAV, PLAYER_DOG]:
+    status, data = get(f"/tennis/v2/search?search={name}")
+    print(f"\n  Search '{name}' → status {status}")
+    show(data)
 
-    # Matches / schedule
-    "/tennis/v2/matches",
-    "/tennis/v2/matches/today",
+    # Intentar extraer player ID automáticamente
+    # (ajusta el path una vez que veas la estructura real)
+    if isinstance(data, list) and data:
+        for item in data:
+            if isinstance(item, dict):
+                # Buscar campo que parezca un ID de jugador
+                for id_field in ["id", "player_id", "playerId", "ID"]:
+                    if id_field in item:
+                        player_ids[name] = item[id_field]
+                        print(f"  → ID detectado para '{name}': {item[id_field]}")
+                        break
+                if player_ids[name]:
+                    break
+    elif isinstance(data, dict):
+        results = data.get("results") or data.get("players") or data.get("data") or []
+        if isinstance(results, list) and results:
+            first = results[0]
+            for id_field in ["id", "player_id", "playerId"]:
+                if id_field in first:
+                    player_ids[name] = first[id_field]
+                    print(f"  → ID detectado para '{name}': {first[id_field]}")
+                    break
+
+print(f"\n  IDs extraídos: {player_ids}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. H2H STATS — historial entre los dos jugadores
+# ─────────────────────────────────────────────────────────────────────────────
+section("2. H2H STATS — historial directo entre los dos jugadores")
+
+# IDs de ejemplo de la documentación (5992 y 677) — usa los reales si los tienes
+id1 = player_ids.get(PLAYER_FAV) or 5992
+id2 = player_ids.get(PLAYER_DOG) or 677
+
+status, data = get(f"/tennis/v2/atp/h2h/stats/{id1}/{id2}/")
+print(f"  /tennis/v2/atp/h2h/stats/{id1}/{id2}/ → status {status}")
+show(data)
+
+# También probar WTA por si acaso
+section("2b. H2H STATS WTA (si es partida femenina)")
+status_wta, data_wta = get(f"/tennis/v2/wta/h2h/stats/{id1}/{id2}/")
+print(f"  /tennis/v2/wta/h2h/stats/{id1}/{id2}/ → status {status_wta}")
+if status_wta == 200:
+    show(data_wta)
+else:
+    print(f"  (no disponible: {data_wta})")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. H2H MATCH STATS — stats de un partido específico
+# ─────────────────────────────────────────────────────────────────────────────
+section("3. H2H MATCH STATS — detalle de una partida puntual (IDs ejemplo)")
+
+status, data = get("/tennis/v2/atp/h2h/match-stats/19400/5992/677")
+print(f"  /tennis/v2/atp/h2h/match-stats/19400/5992/677 → status {status}")
+show(data)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Buscar endpoint con partidos de HOY (necesitamos match IDs actuales)
+# ─────────────────────────────────────────────────────────────────────────────
+section("4. SCHEDULE / FIXTURES — buscar partidos de hoy")
+
+SCHEDULE_CANDIDATES = [
+    "/tennis/v2/atp/schedule",
+    "/tennis/v2/atp/fixtures",
+    "/tennis/v2/atp/matches",
+    "/tennis/v2/atp/matches/today",
+    "/tennis/v2/atp/live",
+    "/tennis/v2/atp/live-scores",
     "/tennis/v2/schedule",
-    "/tennis/v2/fixtures",
+    "/tennis/v2/matches",
     "/tennis/v2/live",
-
-    # Tournament / tour
-    "/tennis/v2/atp",
-    "/tennis/v2/wta",
-    "/tennis/v2/tours",
-
-    # Stats & head-to-head
-    "/tennis/v2/h2h",
-    "/tennis/v2/players",
-    "/tennis/v2/rankings",
-
-    # Root discovery
-    "/tennis/v2/",
-    "/tennis/",
-    "/",
+    "/tennis/v2/atp/results",
+    "/tennis/v2/atp/draws",
 ]
 
-section("2. Buscando endpoints disponibles...")
-working = []
-for path in CANDIDATES:
-    status, data = get(path)
-    ok = status == 200
-    print(f"  {'✓' if ok else '✗'} [{status}] {path}")
+schedule_working = []
+for path in SCHEDULE_CANDIDATES:
+    s, d = get(path)
+    ok = s == 200
+    print(f"  {'✓' if ok else '✗'} [{s:3d}] {path}")
     if ok:
-        working.append((path, data))
+        schedule_working.append((path, d))
 
-# ---------------------------------------------------------------------------
-# 3. Print full responses for working endpoints
-# ---------------------------------------------------------------------------
-if working:
-    section("3. Respuestas completas de endpoints exitosos")
-    for path, data in working:
-        print(f"\n--- {path} ---")
-        print(pretty(data))
-else:
-    print("\n⚠️  Ningún endpoint candidato respondió con 200.")
-    print("   Prueba inspeccionar la pestaña 'Endpoints' en RapidAPI:")
-    print(f"   https://rapidapi.com/jjrm365-kIFr3Nx_odV/api/tennis-api-atp-wta-itf")
+if schedule_working:
+    section("4b. Respuestas de schedule disponibles")
+    for path, d in schedule_working:
+        print(f"\n  --- {path} ---")
+        show(d)
 
-# ---------------------------------------------------------------------------
-# 4. If we found match data, search for prediction-related fields
-# ---------------------------------------------------------------------------
-section("4. Análisis — campos con probabilidades o ganadores")
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. ANÁLISIS AUTOMÁTICO — extraer campos de win probability del H2H
+# ─────────────────────────────────────────────────────────────────────────────
+section("5. ANÁLISIS — campos de win% en la respuesta H2H")
 
-def find_probability_fields(obj, path="", results=None):
-    """Recursively search for fields that look like win probabilities."""
-    if results is None:
-        results = []
-    keywords = ["prob", "pct", "percent", "win", "predict", "odd", "chance", "favorite", "winner"]
+def find_win_fields(obj, path="", out=None):
+    if out is None:
+        out = []
+    keywords = ["win", "pct", "prob", "percent", "ratio", "total", "count",
+                "won", "lost", "stat", "match"]
     if isinstance(obj, dict):
         for k, v in obj.items():
-            full_path = f"{path}.{k}" if path else k
-            if any(kw in k.lower() for kw in keywords):
-                results.append(f"  FIELD: {full_path} = {repr(v)[:100]}")
-            find_probability_fields(v, full_path, results)
+            fp = f"{path}.{k}" if path else k
+            if any(kw in str(k).lower() for kw in keywords):
+                out.append(f"  {fp} = {repr(v)[:80]}")
+            find_win_fields(v, fp, out)
     elif isinstance(obj, list) and obj:
-        find_probability_fields(obj[0], f"{path}[0]", results)
-    return results
+        find_win_fields(obj[0], f"{path}[0]", out)
+    return out
 
-for path, data in working:
-    fields = find_probability_fields(data)
-    if fields:
-        print(f"\n  Endpoint: {path}")
-        for f in fields[:20]:
-            print(f)
+_, h2h_data = get(f"/tennis/v2/atp/h2h/stats/{id1}/{id2}/")
+fields = find_win_fields(h2h_data)
+if fields:
+    print(f"\n  Campos relevantes en H2H stats:")
+    for f in fields[:30]:
+        print(f)
+else:
+    print("  (no se detectaron campos de win% — revisa la respuesta completa en sección 2)")
 
-print("\n" + "=" * 60)
-print("  PRÓXIMOS PASOS")
-print("=" * 60)
-print("""
-1. Identifica qué endpoint devuelve los partidos de hoy con ganador predicho
-2. Anota el path exacto (ej: /tennis/v2/predictions) y la estructura JSON
-3. Actualiza en app/matchstat_client.py:
-   - MATCHSTAT_ENDPOINT en .env → el path correcto
-   - La función _parse_win_probability() → extrae el % del JSON real
-4. Ejecuta el bot en dry-run para verificar que funciona
+# ─────────────────────────────────────────────────────────────────────────────
+# RESUMEN
+# ─────────────────────────────────────────────────────────────────────────────
+section("PRÓXIMOS PASOS")
+print(f"""
+IDs encontrados:
+  {PLAYER_FAV}: {player_ids.get(PLAYER_FAV) or '⚠️  no detectado — revisa respuesta de search'}
+  {PLAYER_DOG}: {player_ids.get(PLAYER_DOG) or '⚠️  no detectado — revisa respuesta de search'}
 
-Si no ves el endpoint correcto arriba, ve a:
-https://rapidapi.com/jjrm365-kIFr3Nx_odV/api/tennis-api-atp-wta-itf
-→ Pestaña "Endpoints" → prueba cada uno interactivamente
+Con esos datos pégame en el chat:
+  1. El JSON de search (sección 1) para un jugador — para saber cómo extraer el ID
+  2. El JSON de H2H stats (sección 2) — para saber qué campo da el win count/pct
+  3. Si encontraste un endpoint de schedule (sección 4) que funcione
+
+Con eso actualizo matchstat_client.py para que el parser sea exacto.
 """)

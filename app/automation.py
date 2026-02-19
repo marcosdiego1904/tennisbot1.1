@@ -203,9 +203,13 @@ async def run_automation_cycle() -> dict:
                 summary["details"].append(detail)
                 continue
 
-            # Step 3: Confirm with Matchstat
+            # Step 3: Confirm with Matchstat (H2H histórico)
             summary["matchstat_checked"] += 1
-            win_pct = await get_player_win_probability(m.player_fav.name)
+            win_pct = await get_player_win_probability(
+                player_fav=m.player_fav.name,
+                player_dog=m.player_dog.name,
+                tournament_level=m.tournament_level,
+            )
             detail["matchstat_win_pct"] = round(win_pct * 100, 1) if win_pct is not None else None
             matchstat_ok = confirms_signal(win_pct)
             detail["matchstat_confirmed"] = matchstat_ok
