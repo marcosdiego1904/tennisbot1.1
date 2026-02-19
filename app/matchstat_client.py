@@ -183,43 +183,34 @@ def _parse_h2h_wins(data: dict | list, id_fav: int) -> tuple[int, int]:
     """
     Extrae (partidos_ganados_por_fav, total_partidos) del response H2H.
 
-    !! ACTUALIZA ESTE BLOQUE con la estructura JSON real del endpoint !!
-
-    Para saber qué estructura tiene el response:
-      - Ejecuta scripts/explore_matchstat_api.py
-      - Mira la sección 2 (H2H STATS) y copia el JSON aquí
-
-    Patrones comunes:
-      {"player1": {"id": 5992, "wins": 8}, "player2": {"id": 677, "wins": 4}, "total": 12}
-      {"h2h": {"player1_wins": 8, "player2_wins": 4}}
-      {"stats": {"matches_played": 12, "player1_won": 8}}
-      [{"winner_id": 5992}, {"winner_id": 677}, ...]   ← lista de partidos individuales
+    Estructura real del endpoint /tennis/v2/atp/h2h/stats/{id1}/{id2}/:
+    {
+      "data": {
+        "matchesCount": "60",
+        "player1Stats": {"id": "5992", "matchesWon": 31, ...},
+        "player2Stats": {"id": "677",  "matchesWon": 29, ...}
+      }
+    }
     """
-    # Log para depuración inicial — quita esta línea una vez que funcione
-    logger.info(f"H2H raw response (fav_id={id_fav}): {str(data)[:800]}")
-
-    # --- BLOQUE A ACTUALIZAR ---
-    # Reemplaza esto con el parsing real según el JSON que veas en el script.
-    #
-    # Ejemplo A — si el response tiene wins directos por jugador:
-    #
-    # if isinstance(data, dict):
-    #     p1 = data.get("player1") or {}
-    #     p2 = data.get("player2") or {}
-    #     total = data.get("total") or (p1.get("wins", 0) + p2.get("wins", 0))
-    #     if p1.get("id") == id_fav:
-    #         return p1.get("wins", 0), total
-    #     elif p2.get("id") == id_fav:
-    #         return p2.get("wins", 0), total
-    #
-    # Ejemplo B — si el response es una lista de partidos individuales:
-    #
-    # if isinstance(data, list):
-    #     total = len(data)
-    #     wins_fav = sum(1 for m in data if m.get("winner_id") == id_fav)
-    #     return wins_fav, total
-
-    return 0, 0  # ← Quita esto una vez implementado el parsing real
+    if not isinstance(data, dict):
+        return 0, 0
+    inner = data.get("data", {})
+    if not isinstance(inner, dict):
+        return 0, 0
+    try:
+        total = int(inner.get("matchesCount", 0))
+    except (TypeError, ValueError):
+        return 0, 0
+    if total == 0:
+        return 0, 0
+    p1 = inner.get("player1Stats", {}) or {}
+    p2 = inner.get("player2Stats", {}) or {}
+    if str(p1.get("id", "")) == str(id_fav):
+        return int(p1.get("matchesWon", 0)), total
+    elif str(p2.get("id", "")) == str(id_fav):
+        return int(p2.get("matchesWon", 0)), total
+    logger.warning(f"H2H: fav_id={id_fav} no encontrado en p1.id={p1.get('id')} / p2.id={p2.get('id')}")
+    return 0, 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
