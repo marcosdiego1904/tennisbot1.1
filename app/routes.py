@@ -151,6 +151,79 @@ async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
     return results
 
 
+@router.get("/debug/matchstat/scan")
+async def debug_matchstat_scan(start: int = 5000, count: int = 50, wta: bool = False):
+    """
+    Escanea un rango de player IDs y devuelve los jugadores encontrados.
+    Úsalo para descubrir IDs y añadirlos a app/player_ids.py.
+
+    Ejemplos:
+      GET /api/debug/matchstat/scan?start=5900&count=100
+      GET /api/debug/matchstat/scan?start=600&count=100
+      GET /api/debug/matchstat/scan?start=10000&count=50
+
+    La respuesta incluye 'add_to_player_ids_py' con el dict listo para copiar.
+    """
+    import httpx
+    import os
+    import asyncio
+
+    count = min(count, 100)  # hard cap — evitar rate limiting
+    tour  = "wta" if wta else "atp"
+    host  = "tennis-api-atp-wta-itf.p.rapidapi.com"
+    headers = {
+        "x-rapidapi-key":  os.getenv("MATCHSTAT_API_KEY", ""),
+        "x-rapidapi-host": host,
+    }
+
+    found: list[dict] = []
+    error_count = 0
+
+    async def probe(client: httpx.AsyncClient, player_id: int) -> None:
+        nonlocal error_count
+        try:
+            r = await client.get(
+                f"https://{host}/tennis/v2/{tour}/player/profile/{player_id}",
+                headers=headers,
+                timeout=8.0,
+            )
+            if r.status_code == 200:
+                data = r.json().get("data", {})
+                if data.get("name"):
+                    found.append({
+                        "id":      player_id,
+                        "name":    data["name"],
+                        "country": data.get("countryAcr", ""),
+                        "status":  data.get("playerStatus", ""),
+                    })
+        except Exception:
+            error_count += 1
+
+    async with httpx.AsyncClient() as client:
+        ids = list(range(start, start + count))
+        # Process in batches of 10 with a short pause between batches
+        for i in range(0, len(ids), 10):
+            batch = ids[i : i + 10]
+            await asyncio.gather(*[probe(client, pid) for pid in batch])
+            if i + 10 < len(ids):
+                await asyncio.sleep(0.3)
+
+    found.sort(key=lambda x: x["id"])
+    active = [p for p in found if p.get("status") == "Active"]
+
+    return {
+        "range":    f"{start}–{start + count - 1}",
+        "scanned":  count,
+        "found":    len(found),
+        "errors":   error_count,
+        "players":  found,
+        # Copy-paste ready dict for app/player_ids.py
+        "add_to_player_ids_py": {
+            p["name"].lower(): p["id"] for p in active
+        },
+    }
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "tennisbot"}

@@ -2,14 +2,16 @@
 Matchstat API client — confirma señales BUY usando historial H2H vía RapidAPI.
 
 Flujo para cada partido:
-  1. search(player_fav)  → player_id del favorito
-  2. search(player_dog)  → player_id del underdog
-  3. h2h_stats(id1, id2) → historial de partidos directos
-  4. win_pct = partidos_ganados_por_fav / total_h2h
-  5. Si win_pct >= MATCHSTAT_MIN_WIN_PCT → confirmar BUY
+  1. Buscar player_id en app/player_ids.py (mapa estático nombre→ID)
+  2. h2h_stats(id1, id2) → historial de partidos directos
+  3. win_pct = partidos_ganados_por_fav / total_h2h
+  4. Si win_pct >= MATCHSTAT_MIN_WIN_PCT → confirmar BUY
+
+NOTA: La API /tennis/v2/search NO devuelve player IDs. Los IDs se obtienen via:
+  GET /api/debug/matchstat/scan?start=5000&count=100
+Y se añaden manualmente a app/player_ids.py.
 
 Endpoints usados:
-  GET /tennis/v2/search?search={nombre}
   GET /tennis/v2/atp/h2h/stats/{id1}/{id2}/
   GET /tennis/v2/wta/h2h/stats/{id1}/{id2}/   (para partidas WTA)
 
@@ -17,10 +19,6 @@ Configuración (.env):
   MATCHSTAT_API_KEY            Tu x-rapidapi-key
   MATCHSTAT_MIN_WIN_PCT=0.60   Win% mínimo en H2H para confirmar (default 60%)
   MATCHSTAT_MIN_H2H_MATCHES=3  Mínimo de partidos H2H para confiar en el dato (default 3)
-
-NOTA: Los parsers _parse_player_id() y _parse_h2h_wins() tienen TODOs marcados.
-      Ejecuta scripts/explore_matchstat_api.py localmente, pega el JSON resultante
-      y actualizamos esas funciones con el parsing exacto.
 """
 
 import os
@@ -50,93 +48,37 @@ def _headers() -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Paso 1: buscar player ID por nombre
+# Paso 1: obtener player ID por nombre (mapa estático)
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _search_player_id(name: str) -> Optional[int]:
     """
-    Llama a /tennis/v2/search?search={name} y extrae el player ID.
+    Busca el player ID en el mapa estático app/player_ids.py.
 
-    !! Actualiza _parse_player_id() con la estructura JSON real !!
-    Ejecuta explore_matchstat_api.py para ver el response de search.
+    La API /tennis/v2/search NO devuelve IDs numéricos, por lo que no
+    se realiza ninguna llamada HTTP aquí.
+
+    Para añadir nuevos jugadores:
+      1. Ejecuta GET /api/debug/matchstat/scan?start=X&count=100
+      2. Anota el ID del jugador en la respuesta
+      3. Añádelo a app/player_ids.py
     """
     if name in _player_id_cache:
         return _player_id_cache[name]
 
-    api_key = os.getenv("MATCHSTAT_API_KEY")
-    if not api_key:
-        return None
+    from app.player_ids import find_player_id
+    player_id = find_player_id(name)
 
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(
-                f"{MATCHSTAT_BASE}/tennis/v2/search",
-                params={"search": name},
-                headers=_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            logger.debug(f"Search '{name}': {str(data)[:400]}")
-            player_id = _parse_player_id(data, name)
-            _player_id_cache[name] = player_id
-            return player_id
+    if player_id is not None:
+        logger.info(f"Player ID found for '{name}': {player_id} (static map)")
+    else:
+        logger.warning(
+            f"Player '{name}' not in static ID map — skip H2H check. "
+            "Discover ID via GET /api/debug/matchstat/scan and add to app/player_ids.py"
+        )
 
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Search error {e.response.status_code} for '{name}': {e.response.text[:200]}")
-        return None
-    except Exception as e:
-        logger.error(f"Search failed for '{name}': {e}")
-        return None
-
-
-def _parse_player_id(data: dict | list, name: str) -> Optional[int]:
-    """
-    Extrae el player ID del response de /tennis/v2/search.
-
-    !! ACTUALIZA ESTE BLOQUE con la estructura JSON real del endpoint !!
-
-    Para saber qué estructura tiene el response:
-      - Ejecuta scripts/explore_matchstat_api.py
-      - Mira la sección 1 (SEARCH) y copia el JSON aquí
-
-    Patrones comunes en tennis APIs:
-      [{"id": 123, "name": "Jannik Sinner", "type": "player"}, ...]
-      {"players": [{"player_id": 123, "full_name": "Sinner J."}]}
-      {"results": [{"id": 123, "label": "Sinner, Jannik"}]}
-    """
-    # Log para depuración inicial — quita esta línea una vez que funcione
-    logger.info(f"Search raw response for '{name}': {str(data)[:600]}")
-
-    # --- BLOQUE A ACTUALIZAR ---
-    # Reemplaza esto con el parsing real según el JSON que veas en el script.
-    #
-    # Ejemplo (ajusta los field names al response real):
-    #
-    # # Si data es una lista directa de resultados:
-    # if isinstance(data, list):
-    #     for item in data:
-    #         if not isinstance(item, dict):
-    #             continue
-    #         item_name = (item.get("name") or item.get("full_name") or
-    #                      item.get("label") or "").lower()
-    #         if name.lower() in item_name or item_name in name.lower():
-    #             for id_field in ["id", "player_id", "playerId"]:
-    #                 if item.get(id_field):
-    #                     return int(item[id_field])
-    #
-    # # Si data es un dict con una clave de resultados:
-    # if isinstance(data, dict):
-    #     for key in ["results", "players", "data", "items"]:
-    #         results = data.get(key, [])
-    #         if isinstance(results, list):
-    #             for item in results:
-    #                 if not isinstance(item, dict):
-    #                     continue
-    #                 for id_field in ["id", "player_id", "playerId"]:
-    #                     if item.get(id_field):
-    #                         return int(item[id_field])
-
-    return None  # ← Quita esto una vez implementado el parsing real
+    _player_id_cache[name] = player_id
+    return player_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
