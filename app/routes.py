@@ -81,6 +81,62 @@ async def debug_kalshi():
         return {"error": str(e)}
 
 
+@router.get("/debug/matchstat")
+async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
+    """
+    Debug endpoint — muestra el JSON crudo de los endpoints de RapidAPI H2H.
+    Úsalo para obtener el JSON real y ajustar los parsers en matchstat_client.py.
+
+    Ejemplo:
+      GET /api/debug/matchstat?fav=Sinner&dog=Medvedev
+      GET /api/debug/matchstat?fav=Alcaraz&dog=Djokovic
+    """
+    import httpx
+    import os
+
+    host    = "tennis-api-atp-wta-itf.p.rapidapi.com"
+    api_key = os.getenv("MATCHSTAT_API_KEY", "")
+    headers = {
+        "x-rapidapi-key":  api_key,
+        "x-rapidapi-host": host,
+    }
+
+    results: dict = {"players_searched": {fav: None, dog: None}, "h2h": None, "errors": []}
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # 1. Search fav
+        for name in [fav, dog]:
+            try:
+                r = await client.get(
+                    f"https://{host}/tennis/v2/search",
+                    params={"search": name},
+                    headers=headers,
+                )
+                results["players_searched"][name] = {
+                    "status": r.status_code,
+                    "json": r.json() if r.status_code == 200 else r.text[:400],
+                }
+            except Exception as e:
+                results["errors"].append(f"search({name}): {e}")
+                results["players_searched"][name] = {"error": str(e)}
+
+        # 2. H2H stats con los IDs de ejemplo de la documentación (5992 y 677)
+        #    Una vez que sepas los IDs reales, pásalos como query params
+        try:
+            r = await client.get(
+                f"https://{host}/tennis/v2/atp/h2h/stats/5992/677/",
+                headers=headers,
+            )
+            results["h2h_example_5992_vs_677"] = {
+                "status": r.status_code,
+                "json": r.json() if r.status_code == 200 else r.text[:400],
+            }
+        except Exception as e:
+            results["errors"].append(f"h2h: {e}")
+
+    return results
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "service": "tennisbot"}
