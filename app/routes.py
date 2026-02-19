@@ -103,8 +103,7 @@ async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
 
     results: dict = {
         "players_searched": {},
-        "ranking_lookup": {},
-        "h2h_if_ids_found": None,
+        "doc_endpoints": {},
         "errors": [],
     }
 
@@ -119,32 +118,35 @@ async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
             results["errors"].append(f"{label}: {e}")
             return {"error": str(e)}
 
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        # 1. Search — ya sabemos que NO devuelve IDs, pero lo dejamos como referencia
+    # Slugs para probar en endpoints que usan nombre
+    fav_slug  = fav.lower().replace(" ", "-")
+    dog_slug  = dog.lower().replace(" ", "-")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # 1. Search — sabemos que no devuelve IDs pero lo mantenemos
         for name in [fav, dog]:
             results["players_searched"][name] = await _get(
                 client, "/tennis/v2/search", params={"search": name}, label=f"search({name})"
             )
 
-        # 2. Rankings ATP — probamos si incluyen player IDs
-        results["ranking_lookup"]["atp_rankings"] = await _get(
-            client, "/tennis/v2/atp/rankings/", label="atp_rankings"
-        )
-
-        # 3. Player detail por apellido — algunos APIs soportan /player/{slug}
-        fav_slug = fav.lower().replace(" ", "-")
-        dog_slug = dog.lower().replace(" ", "-")
-        results["ranking_lookup"]["player_detail_fav"] = await _get(
-            client, f"/tennis/v2/player/{fav_slug}/", label=f"player_detail({fav_slug})"
-        )
-        results["ranking_lookup"]["player_detail_dog"] = await _get(
-            client, f"/tennis/v2/player/{dog_slug}/", label=f"player_detail({dog_slug})"
-        )
-
-        # 4. Alternativa: buscar en rankings de esta semana
-        results["ranking_lookup"]["atp_rankings_singles"] = await _get(
-            client, "/tennis/v2/atp/rankings/singles/", label="atp_rankings_singles"
-        )
+        # 2. Endpoints confirmados en la documentación de RapidAPI
+        doc_probes = {
+            # Player profile por ID conocido (5992 del ejemplo H2H)
+            # → Vemos si devuelve nombre + si podemos hacer lookup inverso
+            "player_profile_5992":          "/tennis/v2/atp/player/profile/5992",
+            # H2H info (vs stats) — puede devolver nombres de jugadores
+            "h2h_info_5992_677":            "/tennis/v2/atp/h2h/info/5992/677/",
+            # Player titles — {player} puede ser ID o slug
+            f"titles_id_5992":              "/tennis/v2/atp/player/titles/5992",
+            f"titles_slug_fav":             f"/tennis/v2/atp/player/titles/{fav_slug}",
+            f"titles_slug_dog":             f"/tennis/v2/atp/player/titles/{dog_slug}",
+            # Alternativa: apellido solo
+            f"titles_surname_fav":          f"/tennis/v2/atp/player/titles/{fav.lower().split()[-1]}",
+            f"titles_surname_dog":          f"/tennis/v2/atp/player/titles/{dog.lower().split()[-1]}",
+        }
+        results["doc_endpoints"] = {}
+        for label, path in doc_probes.items():
+            results["doc_endpoints"][label] = await _get(client, path, label=label)
 
     return results
 
