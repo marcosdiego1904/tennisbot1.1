@@ -84,12 +84,12 @@ async def debug_kalshi():
 @router.get("/debug/matchstat")
 async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
     """
-    Debug endpoint — muestra el JSON crudo de los endpoints de RapidAPI H2H.
-    Úsalo para obtener el JSON real y ajustar los parsers en matchstat_client.py.
+    Debug endpoint — muestra el JSON crudo de los endpoints de RapidAPI H2H
+    e intenta distintos métodos para obtener player IDs.
 
     Ejemplo:
+      GET /api/debug/matchstat?fav=Tiafoe&dog=Svajda
       GET /api/debug/matchstat?fav=Sinner&dog=Medvedev
-      GET /api/debug/matchstat?fav=Alcaraz&dog=Djokovic
     """
     import httpx
     import os
@@ -101,38 +101,50 @@ async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
         "x-rapidapi-host": host,
     }
 
-    results: dict = {"players_searched": {fav: None, dog: None}, "h2h": None, "errors": []}
+    results: dict = {
+        "players_searched": {},
+        "ranking_lookup": {},
+        "h2h_if_ids_found": None,
+        "errors": [],
+    }
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        # 1. Search fav
-        for name in [fav, dog]:
-            try:
-                r = await client.get(
-                    f"https://{host}/tennis/v2/search",
-                    params={"search": name},
-                    headers=headers,
-                )
-                results["players_searched"][name] = {
-                    "status": r.status_code,
-                    "json": r.json() if r.status_code == 200 else r.text[:400],
-                }
-            except Exception as e:
-                results["errors"].append(f"search({name}): {e}")
-                results["players_searched"][name] = {"error": str(e)}
-
-        # 2. H2H stats con los IDs de ejemplo de la documentación (5992 y 677)
-        #    Una vez que sepas los IDs reales, pásalos como query params
+    async def _get(client, path, params=None, label=""):
         try:
-            r = await client.get(
-                f"https://{host}/tennis/v2/atp/h2h/stats/5992/677/",
-                headers=headers,
-            )
-            results["h2h_example_5992_vs_677"] = {
+            r = await client.get(f"https://{host}{path}", params=params, headers=headers)
+            return {
                 "status": r.status_code,
                 "json": r.json() if r.status_code == 200 else r.text[:400],
             }
         except Exception as e:
-            results["errors"].append(f"h2h: {e}")
+            results["errors"].append(f"{label}: {e}")
+            return {"error": str(e)}
+
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        # 1. Search — ya sabemos que NO devuelve IDs, pero lo dejamos como referencia
+        for name in [fav, dog]:
+            results["players_searched"][name] = await _get(
+                client, "/tennis/v2/search", params={"search": name}, label=f"search({name})"
+            )
+
+        # 2. Rankings ATP — probamos si incluyen player IDs
+        results["ranking_lookup"]["atp_rankings"] = await _get(
+            client, "/tennis/v2/atp/rankings/", label="atp_rankings"
+        )
+
+        # 3. Player detail por apellido — algunos APIs soportan /player/{slug}
+        fav_slug = fav.lower().replace(" ", "-")
+        dog_slug = dog.lower().replace(" ", "-")
+        results["ranking_lookup"]["player_detail_fav"] = await _get(
+            client, f"/tennis/v2/player/{fav_slug}/", label=f"player_detail({fav_slug})"
+        )
+        results["ranking_lookup"]["player_detail_dog"] = await _get(
+            client, f"/tennis/v2/player/{dog_slug}/", label=f"player_detail({dog_slug})"
+        )
+
+        # 4. Alternativa: buscar en rankings de esta semana
+        results["ranking_lookup"]["atp_rankings_singles"] = await _get(
+            client, "/tennis/v2/atp/rankings/singles/", label="atp_rankings_singles"
+        )
 
     return results
 
