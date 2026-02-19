@@ -119,32 +119,35 @@ async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
             results["errors"].append(f"{label}: {e}")
             return {"error": str(e)}
 
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        # 1. Search — ya sabemos que NO devuelve IDs, pero lo dejamos como referencia
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # 1. Search — sabemos que no devuelve IDs pero lo mantenemos
         for name in [fav, dog]:
             results["players_searched"][name] = await _get(
                 client, "/tennis/v2/search", params={"search": name}, label=f"search({name})"
             )
 
-        # 2. Rankings ATP — probamos si incluyen player IDs
-        results["ranking_lookup"]["atp_rankings"] = await _get(
-            client, "/tennis/v2/atp/rankings/", label="atp_rankings"
-        )
-
-        # 3. Player detail por apellido — algunos APIs soportan /player/{slug}
-        fav_slug = fav.lower().replace(" ", "-")
-        dog_slug = dog.lower().replace(" ", "-")
-        results["ranking_lookup"]["player_detail_fav"] = await _get(
-            client, f"/tennis/v2/player/{fav_slug}/", label=f"player_detail({fav_slug})"
-        )
-        results["ranking_lookup"]["player_detail_dog"] = await _get(
-            client, f"/tennis/v2/player/{dog_slug}/", label=f"player_detail({dog_slug})"
-        )
-
-        # 4. Alternativa: buscar en rankings de esta semana
-        results["ranking_lookup"]["atp_rankings_singles"] = await _get(
-            client, "/tennis/v2/atp/rankings/singles/", label="atp_rankings_singles"
-        )
+        # 2. Probar variantes de endpoints para obtener player IDs
+        probes = {
+            # Listado de jugadores ATP
+            "atp_players_list":         "/tennis/v2/atp/players/",
+            "atp_players_no_slash":     "/tennis/v2/atp/players",
+            # Rankings ATP
+            "atp_live_rankings":        "/tennis/v2/atp/live/rankings/",
+            "atp_race":                 "/tennis/v2/atp/race/",
+            # Partidos en curso (suelen incluir player id + name)
+            "atp_live_matches":         "/tennis/v2/atp/live/",
+            "live_matches":             "/tennis/v2/live/",
+            # Perfil de jugador con ID conocido (5992 = del ejemplo H2H)
+            "player_profile_5992":      "/tennis/v2/atp/player/5992/",
+            "player_profile_5992b":     "/tennis/v2/player/5992/",
+            # Búsqueda con parámetro alternativo
+            "search_v1":                "/tennis/v1/search",
+            # Schedule/fixtures actuales
+            "atp_schedule":             "/tennis/v2/atp/schedule/",
+            "atp_fixtures":             "/tennis/v2/atp/fixtures/",
+        }
+        for label, path in probes.items():
+            results["ranking_lookup"][label] = await _get(client, path, label=label)
 
     return results
 
