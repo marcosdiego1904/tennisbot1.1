@@ -6,6 +6,8 @@ let activeFilters = { BUY: true, WAIT: true, SKIP: false };  // WAIT kept for ba
 let autoRefreshInterval = null;
 let countdownSeconds = 0;
 let countdownTimer = null;
+let trackedTickers = new Set();   // event tickers already tracked this session
+let currentOutcomeBetId = null;   // bet ID being edited in the outcome modal
 
 const AUTO_REFRESH_SECONDS = 60;
 
@@ -16,6 +18,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const now = new Date();
     document.getElementById("currentDate").textContent =
         now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+    // Load pending badge and sync tracked tickers on page load
+    updatePendingBadge();
+    fetch("/api/bets").then(r => r.json()).then(data => {
+        for (const b of data.bets || []) {
+            if (b.event_ticker) trackedTickers.add(b.event_ticker);
+        }
+    }).catch(() => {});
 });
 
 
@@ -228,6 +238,408 @@ function renderResults(data) {
 }
 
 
+// --- Tab switching ---
+
+function switchTab(tab) {
+    document.getElementById("panelLive").style.display  = tab === "live"  ? "block" : "none";
+    document.getElementById("panelBets").style.display  = tab === "bets"  ? "block" : "none";
+    document.getElementById("panelStats").style.display = tab === "stats" ? "block" : "none";
+
+    document.getElementById("tabLive").classList.toggle("active",  tab === "live");
+    document.getElementById("tabBets").classList.toggle("active",  tab === "bets");
+    document.getElementById("tabStats").classList.toggle("active", tab === "stats");
+
+    if (tab === "bets")  loadMyBets();
+    if (tab === "stats") loadStats();
+}
+
+
+// --- Track a bet (Moment 1 snapshot) ---
+
+async function trackBet(matchData) {
+    const key = matchData.ticker || matchData.fav_name;
+    const btn = document.getElementById(`track-${key}`);
+    if (btn) { btn.disabled = true; btn.textContent = "Saving..."; }
+
+    try {
+        const resp = await fetch("/api/bets/track", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(matchData),
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) throw new Error(data.detail || "Error saving bet");
+
+        trackedTickers.add(key);
+        if (btn) { btn.textContent = "Tracked ✓"; btn.classList.add("tracked"); }
+
+        // Update pending badge
+        updatePendingBadge();
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = "+ Track this bet"; }
+        alert("Error tracking bet: " + err.message);
+    }
+}
+
+async function updatePendingBadge() {
+    try {
+        const resp = await fetch("/api/bets?status=pending");
+        const data = await resp.json();
+        const badge = document.getElementById("pendingBadge");
+        if (data.count > 0) {
+            badge.textContent = data.count;
+            badge.style.display = "inline-block";
+        } else {
+            badge.style.display = "none";
+        }
+    } catch (_) {}
+}
+
+
+// --- My Bets tab ---
+
+async function loadMyBets() {
+    try {
+        const resp = await fetch("/api/bets");
+        const data = await resp.json();
+
+        const pending   = data.bets.filter(b => b.status === "pending");
+        const completed = data.bets.filter(b => b.status === "completed");
+
+        renderPendingBets(pending);
+        renderCompletedBets(completed);
+
+        // Sync trackedTickers with DB (so Track buttons stay correct after page refresh)
+        for (const b of data.bets) {
+            if (b.event_ticker) trackedTickers.add(b.event_ticker);
+        }
+
+        const badge = document.getElementById("pendingBadge");
+        if (pending.length > 0) {
+            badge.textContent = pending.length;
+            badge.style.display = "inline-block";
+        } else {
+            badge.style.display = "none";
+        }
+    } catch (err) {
+        document.getElementById("pendingBetsContainer").innerHTML =
+            `<div class="empty-state"><p>Error loading bets: ${err.message}</p></div>`;
+    }
+}
+
+function renderPendingBets(bets) {
+    const container = document.getElementById("pendingBetsContainer");
+    if (bets.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px;"><p>No pending bets. Track a match from Live Markets.</p></div>';
+        return;
+    }
+
+    let html = `<table class="bets-table">
+        <thead>
+            <tr>
+                <th>Match</th>
+                <th>Tournament</th>
+                <th>Prob%</th>
+                <th>Market</th>
+                <th>Target</th>
+                <th>Surface</th>
+                <th>Tracked</th>
+                <th></th>
+            </tr>
+        </thead><tbody>`;
+
+    for (const b of bets) {
+        const date = new Date(b.tracked_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+        html += `<tr>
+            <td><strong class="fav-name">${b.player_fav}</strong><span class="vs-text"> vs </span>${b.player_dog}</td>
+            <td>${b.tournament}<br><span class="level-tag">${b.tournament_level}</span></td>
+            <td>${b.fav_probability}%</td>
+            <td>${b.kalshi_price}¢</td>
+            <td class="target-price">${b.target_price}¢</td>
+            <td>${b.surface}</td>
+            <td class="date-cell">${date}</td>
+            <td>
+                <button class="btn btn-sm btn-primary" onclick="openOutcomeModal(${b.id}, '${b.player_fav}', '${b.player_dog}', ${b.target_price})">Update</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteBet(${b.id})" title="Delete">✕</button>
+            </td>
+        </tr>`;
+    }
+    html += "</tbody></table>";
+    container.innerHTML = html;
+}
+
+function renderCompletedBets(bets) {
+    const container = document.getElementById("completedBetsContainer");
+    if (bets.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px;"><p>No completed bets yet.</p></div>';
+        return;
+    }
+
+    let html = `<table class="bets-table">
+        <thead>
+            <tr>
+                <th>Match</th>
+                <th>Tournament</th>
+                <th>Prob%</th>
+                <th>Target</th>
+                <th>Lowest</th>
+                <th>Filled?</th>
+                <th>Outcome</th>
+                <th>Edge</th>
+                <th>PNL</th>
+            </tr>
+        </thead><tbody>`;
+
+    for (const b of bets) {
+        const filled = b.order_filled ? '<span class="badge-yes">YES</span>' : '<span class="badge-no">NO</span>';
+        const outcome = b.match_outcome === "fav_won"
+            ? '<span class="badge-yes">Fav Won ✓</span>'
+            : '<span class="badge-no">Fav Lost ✗</span>';
+        const edgeColor = b.edge < 0 ? "color:#3fb950" : "color:#f85149";
+        const pnlColor = b.pnl >= 0 ? "color:#3fb950" : "color:#f85149";
+        const pnlSign = b.pnl > 0 ? "+" : "";
+
+        html += `<tr>
+            <td><strong class="fav-name">${b.player_fav}</strong><span class="vs-text"> vs </span>${b.player_dog}</td>
+            <td>${b.tournament}<br><span class="level-tag">${b.tournament_level}</span></td>
+            <td>${b.fav_probability}%</td>
+            <td>${b.target_price}¢</td>
+            <td>${b.lowest_price_reached ?? "—"}¢</td>
+            <td>${filled}</td>
+            <td>${outcome}</td>
+            <td style="${edgeColor}">${b.edge > 0 ? "+" : ""}${b.edge}¢</td>
+            <td style="${pnlColor};font-weight:700;">${pnlSign}$${b.pnl?.toFixed(2) ?? "—"}</td>
+        </tr>`;
+    }
+    html += "</tbody></table>";
+    container.innerHTML = html;
+}
+
+async function deleteBet(betId) {
+    if (!confirm("Delete this tracked bet?")) return;
+    try {
+        await fetch(`/api/bets/${betId}`, { method: "DELETE" });
+        loadMyBets();
+    } catch (err) {
+        alert("Error deleting bet: " + err.message);
+    }
+}
+
+
+// --- Outcome modal ---
+
+function openOutcomeModal(betId, favName, dogName, targetPrice) {
+    currentOutcomeBetId = betId;
+    document.getElementById("modalTitle").textContent = "Update Outcome";
+    document.getElementById("modalSubtitle").textContent = `${favName} vs ${dogName} — Target: ${targetPrice}¢`;
+    document.getElementById("oContracts").value = "";
+    document.getElementById("oLowestPrice").value = "";
+    document.getElementById("oMatchOutcome").value = "";
+    document.getElementById("outcomePreview").style.display = "none";
+    document.getElementById("modalError").style.display = "none";
+
+    // Store target for live preview
+    document.getElementById("oLowestPrice").dataset.target = targetPrice;
+    document.getElementById("oContracts").dataset.target = targetPrice;
+
+    document.getElementById("outcomeModal").style.display = "flex";
+
+    // Live preview on input change
+    document.getElementById("oLowestPrice").oninput = previewOutcome;
+    document.getElementById("oContracts").oninput = previewOutcome;
+    document.getElementById("oMatchOutcome").onchange = previewOutcome;
+}
+
+function closeOutcomeModal(event) {
+    if (event && event.target !== document.getElementById("outcomeModal")) return;
+    document.getElementById("outcomeModal").style.display = "none";
+    currentOutcomeBetId = null;
+}
+
+function previewOutcome() {
+    const target   = parseInt(document.getElementById("oLowestPrice").dataset.target);
+    const lowest   = parseInt(document.getElementById("oLowestPrice").value);
+    const contracts = parseInt(document.getElementById("oContracts").value) || 0;
+    const outcome  = document.getElementById("oMatchOutcome").value;
+
+    if (!lowest || !outcome) {
+        document.getElementById("outcomePreview").style.display = "none";
+        return;
+    }
+
+    const filled = lowest <= target;
+    const edge   = lowest - target;
+    let pnl = 0;
+    if (filled && contracts > 0) {
+        pnl = outcome === "fav_won"
+            ? ((100 - target) * contracts / 100)
+            : -(target * contracts / 100);
+    }
+
+    document.getElementById("prevFilled").textContent = filled ? "YES ✓" : "NO ✗";
+    document.getElementById("prevFilled").style.color = filled ? "#3fb950" : "#f85149";
+    document.getElementById("prevEdge").textContent = (edge > 0 ? "+" : "") + edge + "¢";
+    document.getElementById("prevEdge").style.color = edge < 0 ? "#3fb950" : "#f85149";
+    document.getElementById("prevPnl").textContent = (pnl >= 0 ? "+" : "") + "$" + pnl.toFixed(2);
+    document.getElementById("prevPnl").style.color = pnl >= 0 ? "#3fb950" : "#f85149";
+    document.getElementById("outcomePreview").style.display = "block";
+}
+
+async function submitOutcome() {
+    const lowest   = parseInt(document.getElementById("oLowestPrice").value);
+    const outcome  = document.getElementById("oMatchOutcome").value;
+    const contracts = parseInt(document.getElementById("oContracts").value) || 0;
+    const errDiv   = document.getElementById("modalError");
+    const btn      = document.getElementById("btnSubmitOutcome");
+
+    errDiv.style.display = "none";
+
+    if (!lowest || lowest < 1 || lowest > 99) {
+        errDiv.textContent = "Enter a valid lowest price (1–99)";
+        errDiv.style.display = "block";
+        return;
+    }
+    if (!outcome) {
+        errDiv.textContent = "Select a match outcome";
+        errDiv.style.display = "block";
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+
+    try {
+        const resp = await fetch(`/api/bets/${currentOutcomeBetId}/outcome`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lowest_price_reached: lowest, match_outcome: outcome, contracts }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "Error");
+
+        document.getElementById("outcomeModal").style.display = "none";
+        currentOutcomeBetId = null;
+        loadMyBets();
+    } catch (err) {
+        errDiv.textContent = "Error: " + err.message;
+        errDiv.style.display = "block";
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Save";
+    }
+}
+
+
+// --- Stats tab ---
+
+async function loadStats() {
+    const container = document.getElementById("statsContainer");
+    container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading stats...</p></div>';
+
+    try {
+        const resp = await fetch("/api/bets/stats");
+        const data = await resp.json();
+        renderStats(data.stats);
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state"><p>Error loading stats: ${err.message}</p></div>`;
+    }
+}
+
+function renderStats(s) {
+    const container = document.getElementById("statsContainer");
+
+    if (!s.completed || s.completed === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:48px;"><p>No completed bets yet. Complete at least one bet to see stats.</p></div>';
+        return;
+    }
+
+    const pnlColor = s.total_pnl >= 0 ? "#3fb950" : "#f85149";
+    const pnlSign  = s.total_pnl > 0 ? "+" : "";
+
+    let html = `
+    <div class="stats-summary">
+        <div class="stat-card">
+            <div class="stat-label">Total Tracked</div>
+            <div class="stat-value">${s.total_tracked}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Completed</div>
+            <div class="stat-value">${s.completed}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Fill Rate</div>
+            <div class="stat-value" style="color:#58a6ff;">${s.fill_rate_pct}%</div>
+            <div class="stat-sub">${s.filled} of ${s.completed} filled</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value" style="color:${s.win_rate_pct >= 70 ? '#3fb950' : '#d29922'};">${s.win_rate_pct}%</div>
+            <div class="stat-sub">${s.won} of ${s.filled} filled bets</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total P&L</div>
+            <div class="stat-value" style="color:${pnlColor};">${pnlSign}$${s.total_pnl?.toFixed(2)}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Edge</div>
+            <div class="stat-value" style="color:${(s.avg_edge_cents ?? 0) <= 0 ? '#3fb950' : '#f85149'};">${s.avg_edge_cents !== null ? (s.avg_edge_cents > 0 ? "+" : "") + s.avg_edge_cents + "¢" : "—"}</div>
+            <div class="stat-sub">target - lowest</div>
+        </div>
+    </div>`;
+
+    // By probability bucket
+    if (s.by_prob_bucket && s.by_prob_bucket.length > 0) {
+        html += `<div class="stats-section-title">By Probability Range</div>`;
+        html += renderStatsTable(s.by_prob_bucket, "bucket");
+    }
+
+    // By tournament level
+    if (s.by_level && s.by_level.length > 0) {
+        html += `<div class="stats-section-title">By Tournament Level</div>`;
+        html += renderStatsTable(s.by_level, "label");
+    }
+
+    // By surface
+    if (s.by_surface && s.by_surface.length > 0) {
+        html += `<div class="stats-section-title">By Surface</div>`;
+        html += renderStatsTable(s.by_surface, "label");
+    }
+
+    container.innerHTML = html;
+}
+
+function renderStatsTable(rows, labelField) {
+    let html = `<table class="bets-table stats-table">
+        <thead><tr>
+            <th>${labelField === "bucket" ? "Range" : "Category"}</th>
+            <th>Bets</th>
+            <th>Filled</th>
+            <th>Fill Rate</th>
+            <th>Won</th>
+            <th>Win Rate</th>
+            <th>P&L</th>
+        </tr></thead><tbody>`;
+
+    for (const r of rows) {
+        const pnlColor = r.pnl >= 0 ? "#3fb950" : "#f85149";
+        const pnlSign  = r.pnl > 0 ? "+" : "";
+        html += `<tr>
+            <td><strong>${r[labelField]}</strong></td>
+            <td>${r.count}</td>
+            <td>${r.filled}</td>
+            <td style="color:#58a6ff;">${r.fill_rate_pct}%</td>
+            <td>${r.won}</td>
+            <td style="color:${r.win_rate_pct >= 70 ? '#3fb950' : '#d29922'};">${r.win_rate_pct}%</td>
+            <td style="color:${pnlColor};font-weight:700;">${pnlSign}$${r.pnl.toFixed(2)}</td>
+        </tr>`;
+    }
+
+    html += "</tbody></table>";
+    return html;
+}
+
+
 // --- Debug: show raw Kalshi data on the dashboard ---
 
 async function fetchDebug() {
@@ -410,6 +822,23 @@ function renderMatchCard(r) {
         detailHTML = `<div class="match-detail">Fav: ${r.fav_probability}% | ${r.tournament || ""}</div>`;
     }
 
+    // Track button — only for BUY signals
+    let trackHTML = "";
+    if (signal === "BUY" && r.target_price) {
+        const alreadyTracked = trackedTickers.has(r.ticker || r.fav_name);
+        trackHTML = `
+            <div class="card-track">
+                <button
+                    class="btn-track ${alreadyTracked ? 'tracked' : ''}"
+                    id="track-${r.ticker || r.fav_name}"
+                    onclick="trackBet(${JSON.stringify(r).replace(/"/g, '&quot;')})"
+                    ${alreadyTracked ? 'disabled' : ''}
+                >
+                    ${alreadyTracked ? 'Tracked ✓' : '+ Track this bet'}
+                </button>
+            </div>`;
+    }
+
     return `
         <div class="match-card signal-${signal}">
             <div class="card-top">
@@ -422,5 +851,6 @@ function renderMatchCard(r) {
             <div class="match-meta">${tagsHTML}</div>
             ${detailHTML}
             ${pricesHTML}
+            ${trackHTML}
         </div>`;
 }

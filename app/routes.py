@@ -12,6 +12,9 @@ from app.models import (
 )
 from app.automation import run_automation_cycle, get_status, get_all_orders
 from app.scheduler import start_automation, stop_automation, scheduler_state
+from app.bet_tracker import (
+    track_bet, get_all_bets, get_bet_by_id, update_outcome, get_stats,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -290,6 +293,105 @@ async def automation_orders():
     try:
         orders = await get_all_orders()
         return {"orders": orders, "count": len(orders)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Bet Tracker endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/bets/track")
+async def bets_track(payload: dict):
+    """
+    Save a snapshot of a match card when the user clicks Track.
+    Receives the card data as a JSON snapshot — values are frozen at click time.
+    """
+    try:
+        bet = await track_bet(
+            event_ticker=payload.get("ticker"),
+            player_fav=payload["fav_name"],
+            player_dog=payload["dog_name"],
+            tournament=payload["tournament"],
+            tournament_level=payload["tournament_level"],
+            surface=payload["surface"],
+            fav_probability=float(payload["fav_probability"]),
+            kalshi_price=int(payload["kalshi_price"]),
+            target_price=int(payload["target_price"]),
+        )
+        return {"status": "ok", "bet": bet}
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/bets")
+async def bets_list(status: str = None):
+    """
+    Return all tracked bets.
+    Optional ?status=pending or ?status=completed filter.
+    """
+    try:
+        bets = await get_all_bets(status=status)
+        return {"bets": bets, "count": len(bets)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/bets/{bet_id}/outcome")
+async def bets_update_outcome(bet_id: int, payload: dict):
+    """
+    Record the outcome for a tracked bet.
+    Accepts: lowest_price_reached (int cents), match_outcome ('fav_won'|'fav_lost'), contracts (int).
+    Auto-calculates: order_filled, fill_price, edge, pnl.
+    """
+    try:
+        lowest = int(payload["lowest_price_reached"])
+        outcome = payload["match_outcome"]
+        contracts = int(payload.get("contracts", 0))
+
+        if outcome not in ("fav_won", "fav_lost"):
+            raise HTTPException(status_code=400, detail="match_outcome must be 'fav_won' or 'fav_lost'")
+
+        bet = await update_outcome(
+            bet_id=bet_id,
+            lowest_price_reached=lowest,
+            match_outcome=outcome,
+            contracts=contracts,
+        )
+        if not bet:
+            raise HTTPException(status_code=404, detail="Bet not found")
+
+        return {"status": "ok", "bet": bet}
+    except HTTPException:
+        raise
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/bets/{bet_id}")
+async def bets_delete(bet_id: int):
+    """Delete a tracked bet by ID."""
+    import aiosqlite
+    from app.bet_tracker import DB_PATH
+    bet = await get_bet_by_id(bet_id)
+    if not bet:
+        raise HTTPException(status_code=404, detail="Bet not found")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM tracked_bets WHERE id = ?", (bet_id,))
+        await db.commit()
+    return {"status": "ok", "deleted_id": bet_id}
+
+
+@router.get("/bets/stats")
+async def bets_stats():
+    """Return analytics over all completed tracked bets."""
+    try:
+        stats = await get_stats()
+        return {"status": "ok", "stats": stats}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

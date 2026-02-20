@@ -14,6 +14,7 @@ load_dotenv()
 
 from app.routes import router
 from app.scheduler import setup_scheduler
+from app.bet_tracker import init_bets_db
 
 app = FastAPI(
     title="TennisBot",
@@ -27,8 +28,9 @@ app.include_router(router)
 
 @app.on_event("startup")
 async def on_startup():
-    """Initialize DB and scheduler on server start."""
+    """Initialize DBs and scheduler on server start."""
     await setup_scheduler()
+    await init_bets_db()
 
 # Serve static frontend
 static_dir = Path(__file__).parent / "static"
