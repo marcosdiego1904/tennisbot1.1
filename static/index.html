@@ -44,8 +44,15 @@
         </div>
     </div>
 
-    <!-- Main content -->
-    <div class="main">
+    <!-- Tab navigation -->
+    <div class="tab-nav">
+        <button class="tab-btn active" id="tabLive" onclick="switchTab('live')">Live Markets</button>
+        <button class="tab-btn" id="tabBets" onclick="switchTab('bets')">My Bets <span class="tab-badge" id="pendingBadge" style="display:none;"></span></button>
+        <button class="tab-btn" id="tabStats" onclick="switchTab('stats')">Stats</button>
+    </div>
+
+    <!-- ==================== TAB: LIVE MARKETS ==================== -->
+    <div class="main" id="panelLive">
 
         <!-- Manual calculator toggle -->
         <button class="btn btn-toggle" id="btnCalcToggle" onclick="toggleCalculator()">
@@ -94,7 +101,6 @@
                 </div>
             </div>
             <button class="btn btn-primary" onclick="analyzeManual()">Analyze</button>
-
             <div id="manualResult"></div>
         </div>
 
@@ -112,6 +118,96 @@
             <div id="debugContainer" style="margin-top: 12px;"></div>
         </div>
 
+    </div>
+
+    <!-- ==================== TAB: MY BETS ==================== -->
+    <div class="main" id="panelBets" style="display:none;">
+
+        <div class="bets-header">
+            <div class="section-title" style="margin-bottom:0;">My Tracked Bets</div>
+            <button class="btn btn-sm" onclick="loadMyBets()">Refresh</button>
+        </div>
+
+        <!-- Pending bets -->
+        <div class="bets-section">
+            <div class="bets-section-title pending-title">Pending — Waiting for Outcome</div>
+            <div id="pendingBetsContainer">
+                <div class="empty-state" style="padding: 24px;">
+                    <p>No pending bets. Track a match from Live Markets.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Completed bets -->
+        <div class="bets-section" style="margin-top: 28px;">
+            <div class="bets-section-title completed-title">Completed</div>
+            <div id="completedBetsContainer">
+                <div class="empty-state" style="padding: 24px;">
+                    <p>No completed bets yet.</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ==================== TAB: STATS ==================== -->
+    <div class="main" id="panelStats" style="display:none;">
+
+        <div class="bets-header">
+            <div class="section-title" style="margin-bottom:0;">Analytics</div>
+            <button class="btn btn-sm" onclick="loadStats()">Refresh</button>
+        </div>
+
+        <div id="statsContainer">
+            <div class="empty-state" style="padding: 48px;">
+                <p>No completed bets yet. Complete at least one bet to see stats.</p>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ==================== OUTCOME MODAL ==================== -->
+    <div class="modal-overlay" id="outcomeModal" style="display:none;" onclick="closeOutcomeModal(event)">
+        <div class="modal-box">
+            <div class="modal-header">
+                <span class="modal-title" id="modalTitle">Update Outcome</span>
+                <button class="modal-close" onclick="closeOutcomeModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-subtitle" id="modalSubtitle"></p>
+
+                <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px;">
+                    <div class="form-group">
+                        <label>Contracts Bought</label>
+                        <input type="number" id="oContracts" placeholder="50" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Lowest Price Reached (¢)</label>
+                        <input type="number" id="oLowestPrice" placeholder="52" min="1" max="99">
+                    </div>
+                    <div class="form-group" style="grid-column: span 2;">
+                        <label>Match Outcome</label>
+                        <select id="oMatchOutcome">
+                            <option value="">— Select —</option>
+                            <option value="fav_won">Favorite Won ✅</option>
+                            <option value="fav_lost">Favorite Lost ❌</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="modal-preview" id="outcomePreview" style="display:none;">
+                    <div class="preview-row"><span>Order Filled?</span><span id="prevFilled">—</span></div>
+                    <div class="preview-row"><span>Edge</span><span id="prevEdge">—</span></div>
+                    <div class="preview-row pnl-row"><span>P&L</span><span id="prevPnl">—</span></div>
+                </div>
+
+                <div id="modalError" class="modal-error" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeOutcomeModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitOutcome()" id="btnSubmitOutcome">Save</button>
+            </div>
+        </div>
     </div>
 
     <script src="/static/app.js"></script>
