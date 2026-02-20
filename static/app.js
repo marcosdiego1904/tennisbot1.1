@@ -822,22 +822,19 @@ function renderMatchCard(r) {
         detailHTML = `<div class="match-detail">Fav: ${r.fav_probability}% | ${r.tournament || ""}</div>`;
     }
 
-    // Track button — available on all signals
-    let trackHTML = "";
-    if (r.kalshi_price != null) {
-        const alreadyTracked = trackedTickers.has(r.ticker || r.fav_name);
-        trackHTML = `
-            <div class="card-track">
-                <button
-                    class="btn-track ${alreadyTracked ? 'tracked' : ''}"
-                    id="track-${r.ticker || r.fav_name}"
-                    onclick="trackBet(${JSON.stringify(r).replace(/"/g, '&quot;')})"
-                    ${alreadyTracked ? 'disabled' : ''}
-                >
-                    ${alreadyTracked ? 'Tracked ✓' : '+ Track this bet'}
-                </button>
-            </div>`;
-    }
+    // Track button — always shown on every card
+    const alreadyTracked = trackedTickers.has(r.ticker || r.fav_name);
+    const trackHTML = `
+        <div class="card-track">
+            <button
+                class="btn-track ${alreadyTracked ? 'tracked' : ''}"
+                id="track-${r.ticker || r.fav_name}"
+                onclick="trackBet(${JSON.stringify(r).replace(/"/g, '&quot;')})"
+                ${alreadyTracked ? 'disabled' : ''}
+            >
+                ${alreadyTracked ? 'Tracked ✓' : '+ Track this bet'}
+            </button>
+        </div>`;
 
     return `
         <div class="match-card signal-${signal}">
