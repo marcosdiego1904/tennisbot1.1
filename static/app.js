@@ -822,9 +822,9 @@ function renderMatchCard(r) {
         detailHTML = `<div class="match-detail">Fav: ${r.fav_probability}% | ${r.tournament || ""}</div>`;
     }
 
-    // Track button — only for BUY signals
+    // Track button — available on all signals
     let trackHTML = "";
-    if (signal === "BUY" && r.target_price) {
+    if (r.kalshi_price != null) {
         const alreadyTracked = trackedTickers.has(r.ticker || r.fav_name);
         trackHTML = `
             <div class="card-track">

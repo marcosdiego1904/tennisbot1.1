@@ -317,7 +317,7 @@ async def bets_track(payload: dict):
             surface=payload["surface"],
             fav_probability=float(payload["fav_probability"]),
             kalshi_price=int(payload["kalshi_price"]),
-            target_price=int(payload["target_price"]),
+            target_price=int(payload["target_price"]) if payload.get("target_price") is not None else 0,
         )
         return {"status": "ok", "bet": bet}
     except (KeyError, ValueError) as e:
