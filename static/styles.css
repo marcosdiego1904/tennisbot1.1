@@ -270,7 +270,6 @@ body {
 
 .match-card.signal-SKIP {
     border-left: 3px solid #484f58;
-    opacity: 0.6;
 }
 
 /* Card top row: badge + players */

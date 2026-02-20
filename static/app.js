@@ -2,7 +2,7 @@
 
 // --- State ---
 let allResults = [];
-let activeFilters = { BUY: true, WAIT: true, SKIP: false };  // WAIT kept for backwards compat
+let activeFilters = { BUY: true, WAIT: true, SKIP: true };
 let autoRefreshInterval = null;
 let countdownSeconds = 0;
 let countdownTimer = null;
@@ -761,27 +761,26 @@ async function fetchDebug() {
 
 function renderMatchCard(r) {
     const signal = r.signal;
-    const isSkip = signal === "SKIP";
 
-    // Price section
-    let pricesHTML = "";
-    if (!isSkip) {
-        pricesHTML = `
-            <div class="match-prices">
-                <div class="price-block kalshi">
-                    <span class="label">Market</span>
-                    <span class="price">${r.kalshi_price}¢</span>
-                </div>
-                <div class="price-block target">
-                    <span class="label">Limit Order</span>
-                    <span class="price">${r.target_price}¢</span>
-                </div>
-                <div class="price-block edge">
-                    <span class="label">Spread</span>
-                    <span class="price">${r.edge.toFixed(1)}¢</span>
-                </div>
-            </div>`;
-    }
+    // Price section — shown on all cards, null-safe values
+    const kalshiPrice = r.kalshi_price != null ? `${r.kalshi_price}¢` : "—";
+    const targetPrice = r.target_price != null ? `${r.target_price}¢` : "—";
+    const edgeVal    = r.edge        != null ? `${r.edge.toFixed(1)}¢` : "—";
+    const pricesHTML = `
+        <div class="match-prices">
+            <div class="price-block kalshi">
+                <span class="label">Market</span>
+                <span class="price">${kalshiPrice}</span>
+            </div>
+            <div class="price-block target">
+                <span class="label">Limit Order</span>
+                <span class="price">${targetPrice}</span>
+            </div>
+            <div class="price-block edge">
+                <span class="label">Spread</span>
+                <span class="price">${edgeVal}</span>
+            </div>
+        </div>`;
 
     // Time display
     let timeHTML = "";
@@ -814,13 +813,9 @@ function renderMatchCard(r) {
 
     const tagsHTML = tags.map(t => `<span class="tag">${t}</span>`).join("");
 
-    // Detail line
-    let detailHTML = "";
-    if (isSkip) {
-        detailHTML = `<div class="match-detail">${r.skip_reason || ""}</div>`;
-    } else {
-        detailHTML = `<div class="match-detail">Fav: ${r.fav_probability}% | ${r.tournament || ""}</div>`;
-    }
+    // Detail line — same on all cards; skip_reason appended when present
+    const skipNote = r.skip_reason ? ` · ${r.skip_reason}` : "";
+    const detailHTML = `<div class="match-detail">Fav: ${r.fav_probability ?? "?"}% | ${r.tournament || ""}${skipNote}</div>`;
 
     // Track button — always shown on every card
     const alreadyTracked = trackedTickers.has(r.ticker || r.fav_name);
