@@ -4,6 +4,7 @@ Entry point for the FastAPI application.
 """
 
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -14,7 +15,10 @@ load_dotenv()
 
 from app.routes import router
 from app.scheduler import setup_scheduler
-from app.bet_tracker import init_bets_db
+from app.bet_tracker import init_bets_db, DB_PATH
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("tennisbot")
 
 app = FastAPI(
     title="TennisBot",
@@ -31,6 +35,16 @@ async def on_startup():
     """Initialize DBs and scheduler on server start."""
     await setup_scheduler()
     await init_bets_db()
+
+    # Volume / persistence check — visible in Railway logs
+    db_exists = DB_PATH.exists()
+    db_size   = DB_PATH.stat().st_size if db_exists else 0
+    if db_exists and db_size > 0:
+        log.info("✅ DB OK — %s (%.1f KB) — data persisted from previous deploy", DB_PATH, db_size / 1024)
+    elif db_exists:
+        log.info("🆕 DB created — %s — first run or empty volume", DB_PATH)
+    else:
+        log.warning("⚠️  DB NOT FOUND at %s — volume may not be mounted", DB_PATH)
 
 # Serve static frontend
 static_dir = Path(__file__).parent / "static"
