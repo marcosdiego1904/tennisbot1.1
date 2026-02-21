@@ -132,20 +132,30 @@ async def debug_matchstat(fav: str = "Sinner", dog: str = "Medvedev"):
                 client, "/tennis/v2/search", params={"search": name}, label=f"search({name})"
             )
 
-        # 2. Endpoints confirmados en la documentación de RapidAPI
+        # 2. Endpoints confirmados y alternativos
+        fav_surname  = fav.lower().split()[-1]
+        dog_surname  = dog.lower().split()[-1]
         doc_probes = {
-            # Player profile por ID conocido (5992 del ejemplo H2H)
-            # → Vemos si devuelve nombre + si podemos hacer lookup inverso
-            "player_profile_5992":          "/tennis/v2/atp/player/profile/5992",
-            # H2H info (vs stats) — puede devolver nombres de jugadores
-            "h2h_info_5992_677":            "/tennis/v2/atp/h2h/info/5992/677/",
-            # Player titles — {player} puede ser ID o slug
-            f"titles_id_5992":              "/tennis/v2/atp/player/titles/5992",
-            f"titles_slug_fav":             f"/tennis/v2/atp/player/titles/{fav_slug}",
-            f"titles_slug_dog":             f"/tennis/v2/atp/player/titles/{dog_slug}",
-            # Alternativa: apellido solo
-            f"titles_surname_fav":          f"/tennis/v2/atp/player/titles/{fav.lower().split()[-1]}",
-            f"titles_surname_dog":          f"/tennis/v2/atp/player/titles/{dog.lower().split()[-1]}",
+            # ── Perfiles por ID conocido ──────────────────────────────────
+            "player_profile_5992":     "/tennis/v2/atp/player/profile/5992",
+            "h2h_info_5992_677":       "/tennis/v2/atp/h2h/info/5992/677/",
+            "titles_id_5992":          "/tennis/v2/atp/player/titles/5992",
+            # ── Rankings (devolvería jugadores actuales con IDs) ──────────
+            "rankings_atp_v2":         "/tennis/v2/atp/rankings",
+            "rankings_atp_v2_slash":   "/tennis/v2/atp/rankings/",
+            "rankings_v2":             "/tennis/v2/rankings",
+            "rankings_atp_v1":         "/tennis/v1/atp/rankings",
+            "race_atp":                "/tennis/v2/atp/race",
+            # ── Live / schedule (puede incluir player IDs) ────────────────
+            "live_v2":                 "/tennis/v2/live",
+            "live_atp":                "/tennis/v2/atp/live",
+            "schedule_atp":            "/tennis/v2/atp/schedule",
+            # ── H2H por nombre / slug (si la API lo soporta) ─────────────
+            f"h2h_slug":               f"/tennis/v2/atp/h2h/stats/{fav_slug}/{dog_slug}/",
+            f"h2h_surname":            f"/tennis/v2/atp/h2h/stats/{fav_surname}/{dog_surname}/",
+            # ── Player lookup por nombre / slug ───────────────────────────
+            f"profile_slug_fav":       f"/tennis/v2/atp/player/profile/{fav_slug}",
+            f"profile_surname_fav":    f"/tennis/v2/atp/player/profile/{fav_surname}",
         }
         results["doc_endpoints"] = {}
         for label, path in doc_probes.items():
