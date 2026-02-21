@@ -1,6 +1,7 @@
 .env
 __pycache__/
 *.pyc
+# data/orders.db is intentionally NOT ignored — kept for persistence
 data/tennis.db
 data/rankings_cache.json
 .venv/
