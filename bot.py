@@ -40,6 +40,7 @@ USAGE
 import os
 import sys
 import time
+import uuid
 import base64
 import logging
 import datetime
@@ -127,7 +128,10 @@ def _post(client: httpx.Client, path: str, body: dict) -> dict:
     url = f"{BASE_URL}{path}"
     headers = _auth_headers("POST", f"/trade-api/v2{path}")
     resp = client.post(url, headers=headers, json=body, timeout=15.0)
-    resp.raise_for_status()
+    if not resp.is_success:
+        raise httpx.HTTPStatusError(
+            f"{resp.status_code} {resp.text}", request=resp.request, response=resp
+        )
     return resp.json()
 
 
@@ -221,6 +225,7 @@ def sell_position(client: httpx.Client, ticker: str, count: int) -> dict:
         "ticker": ticker,
         "count": count,
         "side": "yes",
+        "client_order_id": str(uuid.uuid4()),
     }
     return _post(client, "/portfolio/orders", body)
 
