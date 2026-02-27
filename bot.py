@@ -252,10 +252,11 @@ def get_yes_bid(client: httpx.Client, ticker: str) -> int | None:
         return None
 
 
-def sell_position(client: httpx.Client, ticker: str, count: int) -> dict:
+def sell_position(client: httpx.Client, ticker: str, count: int, yes_price: int) -> dict:
     """
     Place a market sell order for the specified number of YES contracts.
-    Market orders execute immediately at the best available price.
+    yes_price is the minimum acceptable price in cents (use current bid for
+    immediate execution). Kalshi requires this field even on market orders.
     """
     body = {
         "action": "sell",
@@ -263,6 +264,7 @@ def sell_position(client: httpx.Client, ticker: str, count: int) -> dict:
         "ticker": ticker,
         "count": count,
         "side": "yes",
+        "yes_price": max(1, yes_price),
         "client_order_id": str(uuid.uuid4()),
     }
     return _post(client, "/portfolio/orders", body)
@@ -350,7 +352,7 @@ def _execute_sell(
         f"(profit {profit_pct:+.1f}%)..."
     )
     try:
-        result = sell_position(client, ticker, count)
+        result = sell_position(client, ticker, count, yes_price=bid)
         log.info(f"    SOLD OK: {result}")
         return True
     except Exception as e:
