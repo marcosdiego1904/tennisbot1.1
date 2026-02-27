@@ -22,16 +22,17 @@ MODE A — FAVORITE  (avg_buy ≥ LONGSHOT_THRESHOLD, default 30¢)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MODE B — LONGSHOT  (avg_buy < LONGSHOT_THRESHOLD, default 30¢)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  The whole point of a longshot is to capture a rare big move (×5-×6).
-  Percentage-based TPs fire too early and kill that potential.
-  Instead, TPs are price-absolute and sized to let most of the position ride.
+  A longshot is bought because the market mispriced the probability.
+  When the price reaches ~57¢ (the coin-flip zone), the mispricing is
+  gone — the original edge no longer exists. Sell everything and redeploy.
 
-  Take-Profit (absolute price targets):
-    TP1 price ≥ 40¢  → sell 20% of initial  (lock in a small gain, hold 80%)
-    TP2 price ≥ 65¢  → sell 30% of initial  (after TP1)
-    TP3 price ≥ 85¢  → sell ALL remaining    (harvest the big win)
+  Partial exits are avoided intentionally: they cut the best positions
+  while they're running and add complexity for no real benefit.
 
-  Stop-Loss (single hard stop — user accepts the risk):
+  Take-Profit (single clean exit):
+    price ≥ LS_EXIT_PRICE (default 57¢)  →  sell ALL  (+~280% on 15¢ entry)
+
+  Stop-Loss (single hard stop — user accepts the variance):
     Hard  — profit ≤ −60%  → sell ALL remaining
     (No soft stop, no trailing: longshots are volatile by nature)
 
@@ -105,15 +106,10 @@ TRAIL_SL_THRESHOLD_2 = float(os.getenv("TRAIL_SL_THRESHOLD_2", "4.0"))  # $
 TRAIL_SL_RATIO_2     = float(os.getenv("TRAIL_SL_RATIO_2",     "0.50"))
 
 # ── LONGSHOT mode config ──────────────────────────────────────────────────────
-# Take-profit (absolute price targets in ¢)
-LS_TP1_PRICE = int(os.getenv(  "LS_TP1_PRICE", "40"))    # ¢
-LS_TP1_RATIO = float(os.getenv("LS_TP1_RATIO", "0.20"))  # sell 20% — let 80% ride
-LS_TP2_PRICE = int(os.getenv(  "LS_TP2_PRICE", "65"))    # ¢
-LS_TP2_RATIO = float(os.getenv("LS_TP2_RATIO", "0.30"))  # sell 30%
-LS_TP3_PRICE = int(os.getenv(  "LS_TP3_PRICE", "85"))    # ¢ — harvest the big win
-
-# Stop-loss: single loose hard stop (user accepts the risk)
-LS_HARD_SL_PCT = float(os.getenv("LS_HARD_SL_PCT", "-60"))
+# Single clean exit: once the longshot reaches the coin-flip zone (≈55-60¢),
+# the mispricing that justified the bet is gone — sell everything and move on.
+LS_EXIT_PRICE  = int(os.getenv(  "LS_EXIT_PRICE",  "57"))   # ¢ — sell 100% here
+LS_HARD_SL_PCT = float(os.getenv("LS_HARD_SL_PCT", "-60"))  # accept big loss
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 Path("logs").mkdir(exist_ok=True)
@@ -436,24 +432,17 @@ def _evaluate_longshot(
     """
     Exit logic for LONGSHOT positions (avg_buy < LONGSHOT_THRESHOLD).
 
-    TPs are price-absolute (not %-based) so they don't fire on noise
-    and actually capture the big move the longshot was bought for.
-    SL is a single loose hard stop — the user accepts the variance.
+    Single clean exit at LS_EXIT_PRICE (default 57¢): once the price reaches
+    the coin-flip zone the original edge is gone — sell everything and move on.
+    Partial exits are skipped: they cut the best positions while running.
 
-    Priority: Hard Stop → TP3 → TP2 → TP1 → Hold
+    Priority: Hard Stop → Exit TP → Hold
     """
-    initial  = state["initial"]
-    tp1_done = state["tp1_done"]
-    tp2_done = state["tp2_done"]
-
     hard_sl_price = avg_buy * (1.0 + LS_HARD_SL_PCT / 100.0)
 
     log.info(
         f"    [LONGSHOT]  avg_buy={avg_buy:.1f}¢  bid={bid}¢  profit={profit_pct:+.1f}%  "
-        f"hard_sl={hard_sl_price:.1f}¢  "
-        f"tp1={'✓' if tp1_done else '○'} (@{LS_TP1_PRICE}¢)  "
-        f"tp2={'✓' if tp2_done else '○'} (@{LS_TP2_PRICE}¢)  "
-        f"tp3=○ (@{LS_TP3_PRICE}¢)"
+        f"exit_target={LS_EXIT_PRICE}¢  hard_sl={hard_sl_price:.1f}¢ ({LS_HARD_SL_PCT:.0f}%)"
     )
 
     # (1) Hard stop — accept big loss, recover what's left
@@ -464,42 +453,16 @@ def _evaluate_longshot(
         _clear_state(ticker)
         return
 
-    # (2) TP3 — sell ALL remaining at 85¢+ (the big win)
-    if bid >= LS_TP3_PRICE:
+    # (2) Exit TP — coin-flip zone reached, edge is gone, sell everything
+    if bid >= LS_EXIT_PRICE:
         _execute_sell(client, ticker, count, bid, profit_pct,
-            f"LONGSHOT TP3 — sell remaining {count} (price {bid}¢ ≥ {LS_TP3_PRICE}¢)")
+            f"LONGSHOT EXIT (price {bid}¢ ≥ {LS_EXIT_PRICE}¢) — sell ALL {count}")
         _clear_state(ticker)
         return
 
-    # (3) TP2 — sell 30% of initial at 65¢+ (after TP1)
-    if bid >= LS_TP2_PRICE and tp1_done and not tp2_done:
-        qty = max(1, min(round(initial * LS_TP2_RATIO), count))
-        if _execute_sell(client, ticker, qty, bid, profit_pct,
-                f"LONGSHOT TP2 — sell {qty} of {count} ({LS_TP2_RATIO:.0%} of initial {initial}, "
-                f"price {bid}¢ ≥ {LS_TP2_PRICE}¢)"):
-            state["tp2_done"] = True
-            _save_state(ticker, state)
-        return
-
-    # (4) TP1 — sell 20% of initial at 40¢+ (lock small gain, keep 80% riding)
-    if bid >= LS_TP1_PRICE and not tp1_done:
-        qty = max(1, min(round(initial * LS_TP1_RATIO), count))
-        if _execute_sell(client, ticker, qty, bid, profit_pct,
-                f"LONGSHOT TP1 — sell {qty} of {count} ({LS_TP1_RATIO:.0%} of initial {initial}, "
-                f"price {bid}¢ ≥ {LS_TP1_PRICE}¢)"):
-            state["tp1_done"] = True
-            _save_state(ticker, state)
-        return
-
-    # (5) Hold
-    if not tp1_done:
-        next_label = f"TP1 at {LS_TP1_PRICE}¢"
-    elif not tp2_done:
-        next_label = f"TP2 at {LS_TP2_PRICE}¢"
-    else:
-        next_label = f"TP3 at {LS_TP3_PRICE}¢"
+    # (3) Hold — waiting for the move
     log.info(
-        f"    Holding (longshot) — next trigger: {next_label}  "
+        f"    Holding (longshot) — exit at {LS_EXIT_PRICE}¢  "
         f"(hard SL at {LS_HARD_SL_PCT:.0f}%, floor {hard_sl_price:.1f}¢)"
     )
 
@@ -579,11 +542,8 @@ def main():
     log.info(f"    Trailing SL: ${TRAIL_SL_THRESHOLD_1:.0f}→{TRAIL_SL_RATIO_1:.0%} / "
              f"${TRAIL_SL_THRESHOLD_2:.0f}→{TRAIL_SL_RATIO_2:.0%} of peak gain  |  "
              f"Hard {HARD_SL_PCT:.0f}%  |  Soft {SOFT_SL_PCT:.0f}% ({SOFT_SL_RATIO:.0%})")
-    log.info("  LONGSHOT (price based)")
-    log.info(f"    TP1 {LS_TP1_PRICE}¢ → sell {LS_TP1_RATIO:.0%}   "
-             f"TP2 {LS_TP2_PRICE}¢ → sell {LS_TP2_RATIO:.0%}   "
-             f"TP3 {LS_TP3_PRICE}¢ → sell ALL")
-    log.info(f"    Hard SL {LS_HARD_SL_PCT:.0f}%  (no soft stop, no trailing)")
+    log.info("  LONGSHOT (single clean exit)")
+    log.info(f"    Exit at {LS_EXIT_PRICE}¢ → sell ALL  |  Hard SL {LS_HARD_SL_PCT:.0f}%  (no partials, no trailing)")
     log.info("=" * 72)
 
     if DRY_RUN:
