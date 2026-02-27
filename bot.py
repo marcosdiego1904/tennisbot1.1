@@ -1,78 +1,58 @@
 #!/usr/bin/env python3
 """
-Kalshi Auto-Sell Bot — Tiered Take-Profit + Dynamic Stop-Loss
-=============================================================
-Monitors your open YES positions on Kalshi and automatically manages them
-using a tiered take-profit (TP) strategy combined with a three-layer
-dynamic stop-loss system.
+Kalshi Auto-Sell Bot — Dual-Mode: Favorite + Longshot
+======================================================
+Automatically detects whether each position is a FAVORITE (avg_buy ≥ 30¢)
+or a LONGSHOT (avg_buy < 30¢) and applies a completely different exit
+strategy for each.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TAKE-PROFIT STRATEGY
+MODE A — FAVORITE  (avg_buy ≥ LONGSHOT_THRESHOLD, default 30¢)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  TP1 — profit ≥ +25%  →  sell 30% of initial contracts
-        Locks in a partial gain; the rest keeps riding.
+  Take-Profit (% based — scales with entry price):
+    TP1 +25%  → sell 30% of initial
+    TP2 +50%  → sell 40% of initial  (after TP1)
+    TP3 +75% or price ≥ 92¢  → sell ALL remaining
 
-  TP2 — profit ≥ +50%  →  sell 40% of initial contracts  (after TP1)
-        At this point you're guaranteed a net profit regardless.
-
-  TP3 — profit ≥ +75% OR price ≥ 92¢  →  sell ALL remaining contracts
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STOP-LOSS STRATEGY (three layers, evaluated in priority order)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  1. TRAILING STOP — protects profits once they reach a threshold.
-     Computed dynamically from the peak bid ever seen:
-
-       If peak profit on original position ≥ $2:
-         trailing_sl = avg_buy + (peak_gain_per_contract × 30%)
-       If peak profit on original position ≥ $4:
-         trailing_sl = avg_buy + (peak_gain_per_contract × 50%)
-
-     When bid falls below trailing_sl → sell ALL remaining.
-     Example: bought 53¢, peak bid 80¢ → trailing_sl = 53 + 27×0.50 = 66.5¢
-
-  2. HARD STOP — large loss protection.
-     Triggers when profit ≤ HARD_SL_PCT (default −35%)
-     which equals bid ≤ avg_buy × 0.65 (dynamic, scales with entry price).
-     Action: sell ALL remaining contracts.
-
-  3. SOFT STOP — moderate loss protection (fires once, then arms hard stop).
-     Triggers when profit ≤ SOFT_SL_PCT (default −20%).
-     Action: sell SOFT_SL_RATIO (default 50%) of remaining contracts.
-     Recovers half your capital early; hard stop protects the rest.
+  Stop-Loss (three layers):
+    Trailing  — once peak profit ≥ $2 or $4, a floor is set above entry
+    Hard      — profit ≤ −35%  (= price ≤ avg_buy × 0.65)  → sell ALL
+    Soft      — profit ≤ −20%  → sell 50% (once only)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EVALUATION ORDER each scan cycle
+MODE B — LONGSHOT  (avg_buy < LONGSHOT_THRESHOLD, default 30¢)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  (1) Trailing Stop  →  bid < trailing_sl  (if active)
-  (2) Hard Stop      →  profit ≤ −35%
-  (3) Soft Stop      →  profit ≤ −20%  (once only)
-  (4) TP3            →  profit ≥ +75% or price ≥ 92¢
-  (5) TP2            →  profit ≥ +50% (after TP1)
-  (6) TP1            →  profit ≥ +25%
-  (7) Hold           →  update peak bid, log status
+  The whole point of a longshot is to capture a rare big move (×5-×6).
+  Percentage-based TPs fire too early and kill that potential.
+  Instead, TPs are price-absolute and sized to let most of the position ride.
 
-HOW IT WORKS
-  1. Fetches all open YES positions from Kalshi.
-  2. For each, calculates average buy price from fill history.
-  3. Checks the current YES bid (what buyers will pay right now).
-  4. Updates peak bid in SQLite if a new high is reached.
-  5. Evaluates conditions in priority order and executes sells.
-  6. Persists all state to SQLite — restarts are safe.
-  7. Logs everything to console + logs/bot.log.
-  8. Sleeps POLL_INTERVAL seconds and repeats forever.
+  Take-Profit (absolute price targets):
+    TP1 price ≥ 40¢  → sell 20% of initial  (lock in a small gain, hold 80%)
+    TP2 price ≥ 65¢  → sell 30% of initial  (after TP1)
+    TP3 price ≥ 85¢  → sell ALL remaining    (harvest the big win)
 
-CONFIGURATION (env vars — see .env.example for full list)
-  KALSHI_API_KEY         Required
-  KALSHI_API_SECRET      Required (RSA PEM, use literal \\n)
-  DRY_RUN                true = simulate only (default: true)
-  POLL_INTERVAL          Seconds between scans (default: 10)
-  DB_PATH                SQLite file (default: data/orders.db)
+  Stop-Loss (single hard stop — user accepts the risk):
+    Hard  — profit ≤ −60%  → sell ALL remaining
+    (No soft stop, no trailing: longshots are volatile by nature)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SHARED MECHANICS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Mode is detected automatically from avg_buy each scan.
+  • All state (TP levels hit, peak bid) persisted in SQLite — restart-safe.
+  • Every scan updates max_bid_seen for trailing-stop calculation.
+  • DRY_RUN=true simulates all actions without placing real orders.
+
+CONFIGURATION  (see .env.example for the full list)
+  KALSHI_API_KEY / KALSHI_API_SECRET   Required
+  LONGSHOT_THRESHOLD                   ¢ below which longshot mode is used (default: 30)
+  DRY_RUN                              true = simulate (default: true)
+  POLL_INTERVAL                        seconds between scans (default: 10)
 
 USAGE
-  cp .env.example .env   # fill in credentials
-  python bot.py          # run locally
-  nohup python bot.py >> logs/bot.log 2>&1 &   # run on a server
+  cp .env.example .env   # fill in credentials + tune parameters
+  python bot.py
+  nohup python bot.py >> logs/bot.log 2>&1 &
 """
 
 import os
@@ -103,24 +83,37 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "10"))
 DRY_RUN       = os.getenv("DRY_RUN", "true").lower() == "true"
 DB_PATH       = os.getenv("DB_PATH", "data/orders.db")
 
-# Take-profit levels
-TP1_PROFIT_PCT   = float(os.getenv("TP1_PROFIT_PCT",   "25"))    # % profit → sell TP1_SELL_RATIO
+# Mode detection threshold (¢): below this → LONGSHOT mode
+LONGSHOT_THRESHOLD = int(os.getenv("LONGSHOT_THRESHOLD", "30"))
+
+# ── FAVORITE mode config ──────────────────────────────────────────────────────
+# Take-profit (% based)
+TP1_PROFIT_PCT   = float(os.getenv("TP1_PROFIT_PCT",   "25"))
 TP1_SELL_RATIO   = float(os.getenv("TP1_SELL_RATIO",   "0.30"))
-TP2_PROFIT_PCT   = float(os.getenv("TP2_PROFIT_PCT",   "50"))    # % profit → sell TP2_SELL_RATIO (after TP1)
+TP2_PROFIT_PCT   = float(os.getenv("TP2_PROFIT_PCT",   "50"))
 TP2_SELL_RATIO   = float(os.getenv("TP2_SELL_RATIO",   "0.40"))
-TP3_PROFIT_PCT   = float(os.getenv("TP3_PROFIT_PCT",   "75"))    # % profit → sell ALL remaining
-TP3_PRICE_TARGET = int(os.getenv(  "TP3_PRICE_TARGET", "92"))    # ¢ price → also triggers TP3
+TP3_PROFIT_PCT   = float(os.getenv("TP3_PROFIT_PCT",   "75"))
+TP3_PRICE_TARGET = int(os.getenv(  "TP3_PRICE_TARGET", "92"))   # ¢
 
-# Stop-loss: soft + hard (dynamic, relative to entry price)
-SOFT_SL_PCT   = float(os.getenv("SOFT_SL_PCT",   "-20"))   # % loss → sell SOFT_SL_RATIO
-SOFT_SL_RATIO = float(os.getenv("SOFT_SL_RATIO", "0.50"))  # fraction of remaining to sell at soft stop
-HARD_SL_PCT   = float(os.getenv("HARD_SL_PCT",   "-35"))   # % loss → sell ALL (= avg_buy × 0.65)
-
-# Trailing stop: activates once peak profit (on original position) exceeds threshold
-TRAIL_SL_THRESHOLD_1 = float(os.getenv("TRAIL_SL_THRESHOLD_1", "2.0"))  # $2 → lock 30% of peak gain
+# Stop-loss: soft + hard + trailing
+SOFT_SL_PCT          = float(os.getenv("SOFT_SL_PCT",          "-20"))
+SOFT_SL_RATIO        = float(os.getenv("SOFT_SL_RATIO",        "0.50"))
+HARD_SL_PCT          = float(os.getenv("HARD_SL_PCT",          "-35"))
+TRAIL_SL_THRESHOLD_1 = float(os.getenv("TRAIL_SL_THRESHOLD_1", "2.0"))  # $
 TRAIL_SL_RATIO_1     = float(os.getenv("TRAIL_SL_RATIO_1",     "0.30"))
-TRAIL_SL_THRESHOLD_2 = float(os.getenv("TRAIL_SL_THRESHOLD_2", "4.0"))  # $4 → lock 50% of peak gain
+TRAIL_SL_THRESHOLD_2 = float(os.getenv("TRAIL_SL_THRESHOLD_2", "4.0"))  # $
 TRAIL_SL_RATIO_2     = float(os.getenv("TRAIL_SL_RATIO_2",     "0.50"))
+
+# ── LONGSHOT mode config ──────────────────────────────────────────────────────
+# Take-profit (absolute price targets in ¢)
+LS_TP1_PRICE = int(os.getenv(  "LS_TP1_PRICE", "40"))    # ¢
+LS_TP1_RATIO = float(os.getenv("LS_TP1_RATIO", "0.20"))  # sell 20% — let 80% ride
+LS_TP2_PRICE = int(os.getenv(  "LS_TP2_PRICE", "65"))    # ¢
+LS_TP2_RATIO = float(os.getenv("LS_TP2_RATIO", "0.30"))  # sell 30%
+LS_TP3_PRICE = int(os.getenv(  "LS_TP3_PRICE", "85"))    # ¢ — harvest the big win
+
+# Stop-loss: single loose hard stop (user accepts the risk)
+LS_HARD_SL_PCT = float(os.getenv("LS_HARD_SL_PCT", "-60"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 Path("logs").mkdir(exist_ok=True)
@@ -153,10 +146,8 @@ def _load_key():
 
 def _auth_headers(method: str, path: str) -> dict:
     ts = str(int(time.time() * 1000))
-    path_no_query = path.split("?")[0]
-    message = f"{ts}{method}{path_no_query}".encode()
-    key = _load_key()
-    sig = key.sign(
+    message = f"{ts}{method}{path.split('?')[0]}".encode()
+    sig = _load_key().sign(
         message,
         padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
         hashes.SHA256(),
@@ -171,17 +162,17 @@ def _auth_headers(method: str, path: str) -> dict:
 
 # ── HTTP Helpers ──────────────────────────────────────────────────────────────
 def _get(client: httpx.Client, path: str, params: dict = None) -> dict:
-    url = f"{BASE_URL}{path}"
-    headers = _auth_headers("GET", f"/trade-api/v2{path}")
-    resp = client.get(url, headers=headers, params=params, timeout=15.0)
+    url  = f"{BASE_URL}{path}"
+    resp = client.get(url, headers=_auth_headers("GET", f"/trade-api/v2{path}"),
+                      params=params, timeout=15.0)
     resp.raise_for_status()
     return resp.json()
 
 
 def _post(client: httpx.Client, path: str, body: dict) -> dict:
-    url = f"{BASE_URL}{path}"
-    headers = _auth_headers("POST", f"/trade-api/v2{path}")
-    resp = client.post(url, headers=headers, json=body, timeout=15.0)
+    url  = f"{BASE_URL}{path}"
+    resp = client.post(url, headers=_auth_headers("POST", f"/trade-api/v2{path}"),
+                       json=body, timeout=15.0)
     if not resp.is_success:
         raise httpx.HTTPStatusError(
             f"{resp.status_code} {resp.text}", request=resp.request, response=resp
@@ -196,7 +187,7 @@ def get_open_positions(client: httpx.Client) -> list[dict]:
 
 
 def get_avg_buy_price(client: httpx.Client, ticker: str) -> float | None:
-    """Weighted average price paid for YES contracts, in cents. None if unavailable."""
+    """Weighted average YES buy price in cents, or None."""
     fills, cursor = [], None
     for _ in range(5):
         params = {"ticker": ticker, "limit": 100}
@@ -229,23 +220,17 @@ def get_avg_buy_price(client: httpx.Client, ticker: str) -> float | None:
 def get_yes_bid(client: httpx.Client, ticker: str) -> int | None:
     """Current YES bid in whole cents, or None."""
     try:
-        data   = _get(client, f"/markets/{ticker}")
-        market = data.get("market", {})
+        market = _get(client, f"/markets/{ticker}").get("market", {})
         bid    = market.get("yes_bid")
-        if bid and int(bid) > 0:
-            return int(bid)
-        return None
+        return int(bid) if bid and int(bid) > 0 else None
     except Exception as e:
         log.warning(f"    Could not read market data for {ticker}: {e}")
         return None
 
 
 def sell_position(client: httpx.Client, ticker: str, count: int, yes_price: int) -> dict:
-    """
-    Market sell order for `count` YES contracts.
-    yes_price (current bid in ¢) is required by the Kalshi API even for market orders.
-    """
-    body = {
+    """Market sell. yes_price (current bid) required by Kalshi even on market orders."""
+    return _post(client, "/portfolio/orders", {
         "action": "sell",
         "type": "market",
         "ticker": ticker,
@@ -253,13 +238,11 @@ def sell_position(client: httpx.Client, ticker: str, count: int, yes_price: int)
         "side": "yes",
         "yes_price": max(1, yes_price),
         "client_order_id": str(uuid.uuid4()),
-    }
-    return _post(client, "/portfolio/orders", body)
+    })
 
 
 # ── State Persistence (SQLite) ────────────────────────────────────────────────
 def _init_state_table():
-    """Create the tp_state table and add any missing columns (safe for existing DBs)."""
     Path("data").mkdir(exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
@@ -274,35 +257,26 @@ def _init_state_table():
                 updated_at      TEXT NOT NULL
             )
         """)
-        # Migrate existing tables that pre-date the v2 stop-loss columns
         for col, default in [("soft_stop_done", 0), ("max_bid_seen", 0)]:
             try:
                 conn.execute(
                     f"ALTER TABLE tp_state ADD COLUMN {col} INTEGER NOT NULL DEFAULT {default}"
                 )
             except sqlite3.OperationalError:
-                pass  # column already exists — no action needed
+                pass  # column already exists
 
 
 def _load_state(ticker: str, current_count: int) -> dict:
-    """
-    Load persisted state for a ticker. Initializes on first sight,
-    treating current_count as the baseline (100% of position).
-    """
     now = datetime.datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT initial_count, tp1_done, tp2_done, soft_stop_done, max_bid_seen "
-            "FROM tp_state WHERE ticker=?",
-            (ticker,),
+            "FROM tp_state WHERE ticker=?", (ticker,)
         ).fetchone()
         if row:
             return {
-                "initial":        row[0],
-                "tp1_done":       bool(row[1]),
-                "tp2_done":       bool(row[2]),
-                "soft_stop_done": bool(row[3]),
-                "max_bid_seen":   row[4],
+                "initial": row[0], "tp1_done": bool(row[1]), "tp2_done": bool(row[2]),
+                "soft_stop_done": bool(row[3]), "max_bid_seen": row[4],
             }
         conn.execute(
             "INSERT INTO tp_state "
@@ -316,7 +290,6 @@ def _load_state(ticker: str, current_count: int) -> dict:
 
 
 def _save_state(ticker: str, state: dict):
-    """Persist all mutable state fields for a ticker."""
     now = datetime.datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
@@ -324,79 +297,221 @@ def _save_state(ticker: str, state: dict):
             "SET tp1_done=?, tp2_done=?, soft_stop_done=?, max_bid_seen=?, updated_at=? "
             "WHERE ticker=?",
             (int(state["tp1_done"]), int(state["tp2_done"]),
-             int(state["soft_stop_done"]), int(state["max_bid_seen"]),
-             now, ticker),
+             int(state["soft_stop_done"]), int(state["max_bid_seen"]), now, ticker),
         )
 
 
 def _clear_state(ticker: str):
-    """Remove a ticker's state once the position is fully closed."""
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM tp_state WHERE ticker=?", (ticker,))
 
 
-# ── Trailing Stop Calculator ──────────────────────────────────────────────────
+# ── Trailing Stop Calculator (Favorite mode only) ─────────────────────────────
 def _calc_trailing_sl(avg_buy: float, max_bid_seen: int, initial_count: int) -> float | None:
     """
-    Compute the trailing stop-loss price in cents, or None if not yet active.
-
-    Uses initial_count (original position size) to calculate peak profit in $,
-    ensuring thresholds are consistent even after partial TP sells.
-
-    TRAIL_SL_THRESHOLD_1 ($2) → lock TRAIL_SL_RATIO_1 (30%) of peak gain per contract
-    TRAIL_SL_THRESHOLD_2 ($4) → lock TRAIL_SL_RATIO_2 (50%) of peak gain per contract
+    Returns trailing SL floor in cents, or None if not yet active.
+    Uses initial_count so thresholds stay consistent after partial TP sells.
     """
-    peak_gain_per_contract = max_bid_seen - avg_buy  # cents
-    if peak_gain_per_contract <= 0:
-        return None  # position has never been in profit
-
-    peak_profit_dollars = (peak_gain_per_contract / 100.0) * initial_count
-
+    peak_gain = max_bid_seen - avg_buy
+    if peak_gain <= 0:
+        return None
+    peak_profit_dollars = (peak_gain / 100.0) * initial_count
     if peak_profit_dollars >= TRAIL_SL_THRESHOLD_2:
-        return avg_buy + peak_gain_per_contract * TRAIL_SL_RATIO_2
+        return avg_buy + peak_gain * TRAIL_SL_RATIO_2
     if peak_profit_dollars >= TRAIL_SL_THRESHOLD_1:
-        return avg_buy + peak_gain_per_contract * TRAIL_SL_RATIO_1
+        return avg_buy + peak_gain * TRAIL_SL_RATIO_1
     return None
 
 
 # ── Sell Helper ───────────────────────────────────────────────────────────────
 def _execute_sell(
-    client: httpx.Client,
-    ticker: str,
-    count: int,
-    bid: int,
-    profit_pct: float,
-    label: str,
+    client: httpx.Client, ticker: str, count: int,
+    bid: int, profit_pct: float, label: str,
 ) -> bool:
-    """Execute (or simulate) a market sell. Returns True on success."""
     if DRY_RUN:
         log.info(
             f"    [DRY RUN] {label} — Would sell {count} contract(s) "
             f"at ~{bid}¢  (profit {profit_pct:+.1f}%)"
         )
         return True
-
-    log.info(
-        f"    {label} — Selling {count} contract(s) at ~{bid}¢  "
-        f"(profit {profit_pct:+.1f}%)..."
-    )
+    log.info(f"    {label} — Selling {count} contract(s) at ~{bid}¢  (profit {profit_pct:+.1f}%)...")
     try:
-        result = sell_position(client, ticker, count, yes_price=bid)
-        log.info(f"    SOLD OK: {result}")
+        log.info(f"    SOLD OK: {sell_position(client, ticker, count, yes_price=bid)}")
         return True
     except Exception as e:
         log.error(f"    SELL FAILED: {e}")
         return False
 
 
+# ── Mode-specific evaluators ──────────────────────────────────────────────────
+def _evaluate_favorite(
+    client: httpx.Client, ticker: str, count: int,
+    bid: int, avg_buy: float, profit_pct: float, state: dict,
+):
+    """
+    Exit logic for FAVORITE positions (avg_buy ≥ LONGSHOT_THRESHOLD).
+    Priority: Trailing Stop → Hard Stop → Soft Stop → TP3 → TP2 → TP1 → Hold
+    """
+    initial        = state["initial"]
+    tp1_done       = state["tp1_done"]
+    tp2_done       = state["tp2_done"]
+    soft_stop_done = state["soft_stop_done"]
+    max_bid_seen   = state["max_bid_seen"]
+
+    hard_sl_price = avg_buy * (1.0 + HARD_SL_PCT / 100.0)
+    trailing_sl   = _calc_trailing_sl(avg_buy, max_bid_seen, initial)
+    trail_str     = f"{trailing_sl:.1f}¢" if trailing_sl is not None else "—"
+
+    log.info(
+        f"    [FAVORITE]  avg_buy={avg_buy:.1f}¢  bid={bid}¢  profit={profit_pct:+.1f}%  "
+        f"peak={max_bid_seen}¢  trail_sl={trail_str}  hard_sl={hard_sl_price:.1f}¢  "
+        f"tp1={'✓' if tp1_done else '○'}  tp2={'✓' if tp2_done else '○'}  "
+        f"soft={'✓' if soft_stop_done else '○'}"
+    )
+
+    # (1) Trailing stop
+    if trailing_sl is not None and bid < trailing_sl:
+        _execute_sell(client, ticker, count, bid, profit_pct,
+            f"TRAILING STOP (bid {bid}¢ < floor {trailing_sl:.1f}¢, peak {max_bid_seen}¢) — sell ALL {count}")
+        _clear_state(ticker)
+        return
+
+    # (2) Hard stop — dynamic floor at avg_buy × 0.65
+    if profit_pct <= HARD_SL_PCT:
+        _execute_sell(client, ticker, count, bid, profit_pct,
+            f"HARD STOP (profit {profit_pct:.1f}% ≤ {HARD_SL_PCT:.0f}%, floor {hard_sl_price:.1f}¢) — sell ALL {count}")
+        _clear_state(ticker)
+        return
+
+    # (3) Soft stop — partial exit
+    if profit_pct <= SOFT_SL_PCT and not soft_stop_done:
+        qty = max(1, round(count * SOFT_SL_RATIO))
+        if _execute_sell(client, ticker, qty, bid, profit_pct,
+                f"SOFT STOP (profit {profit_pct:.1f}% ≤ {SOFT_SL_PCT:.0f}%) — sell {qty} of {count} ({SOFT_SL_RATIO:.0%})"):
+            state["soft_stop_done"] = True
+            _save_state(ticker, state)
+        return
+
+    # (4) TP3 — sell ALL remaining
+    if profit_pct >= TP3_PROFIT_PCT or bid >= TP3_PRICE_TARGET:
+        _execute_sell(client, ticker, count, bid, profit_pct,
+            f"TP3 — sell remaining {count} (profit {profit_pct:+.1f}% | price {bid}¢)")
+        _clear_state(ticker)
+        return
+
+    # (5) TP2 — sell 40% of initial (after TP1)
+    if profit_pct >= TP2_PROFIT_PCT and tp1_done and not tp2_done:
+        qty = max(1, min(round(initial * TP2_SELL_RATIO), count))
+        if _execute_sell(client, ticker, qty, bid, profit_pct,
+                f"TP2 — sell {qty} of {count} ({TP2_SELL_RATIO:.0%} of initial {initial})"):
+            state["tp2_done"] = True
+            _save_state(ticker, state)
+        return
+
+    # (6) TP1 — sell 30% of initial
+    if profit_pct >= TP1_PROFIT_PCT and not tp1_done:
+        qty = max(1, min(round(initial * TP1_SELL_RATIO), count))
+        if _execute_sell(client, ticker, qty, bid, profit_pct,
+                f"TP1 — sell {qty} of {count} ({TP1_SELL_RATIO:.0%} of initial {initial})"):
+            state["tp1_done"] = True
+            _save_state(ticker, state)
+        return
+
+    # (7) Hold
+    if profit_pct < SOFT_SL_PCT:
+        next_label = f"HARD STOP at {HARD_SL_PCT:.0f}% (floor {hard_sl_price:.1f}¢)"
+    elif not tp1_done:
+        next_label = f"TP1 at +{TP1_PROFIT_PCT:.0f}%"
+    elif not tp2_done:
+        next_label = f"TP2 at +{TP2_PROFIT_PCT:.0f}%"
+    else:
+        next_label = f"TP3 at +{TP3_PROFIT_PCT:.0f}% or {TP3_PRICE_TARGET}¢"
+    log.info(f"    Holding — next trigger: {next_label}")
+
+
+def _evaluate_longshot(
+    client: httpx.Client, ticker: str, count: int,
+    bid: int, avg_buy: float, profit_pct: float, state: dict,
+):
+    """
+    Exit logic for LONGSHOT positions (avg_buy < LONGSHOT_THRESHOLD).
+
+    TPs are price-absolute (not %-based) so they don't fire on noise
+    and actually capture the big move the longshot was bought for.
+    SL is a single loose hard stop — the user accepts the variance.
+
+    Priority: Hard Stop → TP3 → TP2 → TP1 → Hold
+    """
+    initial  = state["initial"]
+    tp1_done = state["tp1_done"]
+    tp2_done = state["tp2_done"]
+
+    hard_sl_price = avg_buy * (1.0 + LS_HARD_SL_PCT / 100.0)
+
+    log.info(
+        f"    [LONGSHOT]  avg_buy={avg_buy:.1f}¢  bid={bid}¢  profit={profit_pct:+.1f}%  "
+        f"hard_sl={hard_sl_price:.1f}¢  "
+        f"tp1={'✓' if tp1_done else '○'} (@{LS_TP1_PRICE}¢)  "
+        f"tp2={'✓' if tp2_done else '○'} (@{LS_TP2_PRICE}¢)  "
+        f"tp3=○ (@{LS_TP3_PRICE}¢)"
+    )
+
+    # (1) Hard stop — accept big loss, recover what's left
+    if profit_pct <= LS_HARD_SL_PCT:
+        _execute_sell(client, ticker, count, bid, profit_pct,
+            f"LONGSHOT HARD STOP (profit {profit_pct:.1f}% ≤ {LS_HARD_SL_PCT:.0f}%, "
+            f"floor {hard_sl_price:.1f}¢) — sell ALL {count}")
+        _clear_state(ticker)
+        return
+
+    # (2) TP3 — sell ALL remaining at 85¢+ (the big win)
+    if bid >= LS_TP3_PRICE:
+        _execute_sell(client, ticker, count, bid, profit_pct,
+            f"LONGSHOT TP3 — sell remaining {count} (price {bid}¢ ≥ {LS_TP3_PRICE}¢)")
+        _clear_state(ticker)
+        return
+
+    # (3) TP2 — sell 30% of initial at 65¢+ (after TP1)
+    if bid >= LS_TP2_PRICE and tp1_done and not tp2_done:
+        qty = max(1, min(round(initial * LS_TP2_RATIO), count))
+        if _execute_sell(client, ticker, qty, bid, profit_pct,
+                f"LONGSHOT TP2 — sell {qty} of {count} ({LS_TP2_RATIO:.0%} of initial {initial}, "
+                f"price {bid}¢ ≥ {LS_TP2_PRICE}¢)"):
+            state["tp2_done"] = True
+            _save_state(ticker, state)
+        return
+
+    # (4) TP1 — sell 20% of initial at 40¢+ (lock small gain, keep 80% riding)
+    if bid >= LS_TP1_PRICE and not tp1_done:
+        qty = max(1, min(round(initial * LS_TP1_RATIO), count))
+        if _execute_sell(client, ticker, qty, bid, profit_pct,
+                f"LONGSHOT TP1 — sell {qty} of {count} ({LS_TP1_RATIO:.0%} of initial {initial}, "
+                f"price {bid}¢ ≥ {LS_TP1_PRICE}¢)"):
+            state["tp1_done"] = True
+            _save_state(ticker, state)
+        return
+
+    # (5) Hold
+    if not tp1_done:
+        next_label = f"TP1 at {LS_TP1_PRICE}¢"
+    elif not tp2_done:
+        next_label = f"TP2 at {LS_TP2_PRICE}¢"
+    else:
+        next_label = f"TP3 at {LS_TP3_PRICE}¢"
+    log.info(
+        f"    Holding (longshot) — next trigger: {next_label}  "
+        f"(hard SL at {LS_HARD_SL_PCT:.0f}%, floor {hard_sl_price:.1f}¢)"
+    )
+
+
 # ── Main Scan Logic ───────────────────────────────────────────────────────────
 def run_scan(client: httpx.Client):
     """
-    One full scan cycle. For each open YES position:
-      1. Fetch avg buy price + current bid.
-      2. Update peak bid (max_bid_seen) in DB.
-      3. Compute trailing SL price.
-      4. Evaluate exits in priority order: Trailing → Hard → Soft → TP3 → TP2 → TP1 → Hold.
+    One full scan cycle:
+    1. Fetch open YES positions.
+    2. For each: get avg_buy + current bid, update peak bid.
+    3. Detect mode (FAVORITE vs LONGSHOT) from avg_buy.
+    4. Delegate to the appropriate evaluator.
     """
     try:
         positions = get_open_positions(client)
@@ -428,112 +543,17 @@ def run_scan(client: httpx.Client):
 
         profit_pct = ((bid - avg_buy) / avg_buy) * 100
 
-        # Load state and update peak bid if a new high was reached
+        # Load state and refresh peak bid
         state = _load_state(ticker, count)
         if bid > state["max_bid_seen"]:
             state["max_bid_seen"] = bid
             _save_state(ticker, state)
 
-        initial        = state["initial"]
-        tp1_done       = state["tp1_done"]
-        tp2_done       = state["tp2_done"]
-        soft_stop_done = state["soft_stop_done"]
-        max_bid_seen   = state["max_bid_seen"]
-
-        # Compute dynamic thresholds
-        hard_sl_price  = avg_buy * (1.0 + HARD_SL_PCT / 100.0)   # e.g. 53 × 0.65 = 34.5¢
-        trailing_sl    = _calc_trailing_sl(avg_buy, max_bid_seen, initial)
-
-        # Build trailing SL display string for log
-        if trailing_sl is not None:
-            trail_str = f"trail_sl={trailing_sl:.1f}¢"
+        # Route to the correct exit strategy
+        if avg_buy < LONGSHOT_THRESHOLD:
+            _evaluate_longshot(client, ticker, count, bid, avg_buy, profit_pct, state)
         else:
-            trail_str = "trail_sl=—"
-
-        log.info(
-            f"    avg_buy={avg_buy:.1f}¢  bid={bid}¢  profit={profit_pct:+.1f}%  "
-            f"peak={max_bid_seen}¢  {trail_str}  "
-            f"hard_sl={hard_sl_price:.1f}¢  soft_sl={SOFT_SL_PCT:.0f}%  "
-            f"tp1={'✓' if tp1_done else '○'}  tp2={'✓' if tp2_done else '○'}  "
-            f"soft_stop={'✓' if soft_stop_done else '○'}"
-        )
-
-        # ── (1) TRAILING STOP — protect accumulated gains ─────────────────────
-        if trailing_sl is not None and bid < trailing_sl:
-            _execute_sell(
-                client, ticker, count, bid, profit_pct,
-                f"TRAILING STOP (bid {bid}¢ < floor {trailing_sl:.1f}¢, "
-                f"peak {max_bid_seen}¢) — sell ALL {count}",
-            )
-            _clear_state(ticker)
-            continue
-
-        # ── (2) HARD STOP — dynamic price floor at entry × 0.65 ──────────────
-        if profit_pct <= HARD_SL_PCT:
-            _execute_sell(
-                client, ticker, count, bid, profit_pct,
-                f"HARD STOP (profit {profit_pct:.1f}% ≤ {HARD_SL_PCT:.0f}%, "
-                f"floor {hard_sl_price:.1f}¢) — sell ALL {count}",
-            )
-            _clear_state(ticker)
-            continue
-
-        # ── (3) SOFT STOP — moderate loss, partial exit ───────────────────────
-        if profit_pct <= SOFT_SL_PCT and not soft_stop_done:
-            qty = max(1, round(count * SOFT_SL_RATIO))
-            if _execute_sell(
-                client, ticker, qty, bid, profit_pct,
-                f"SOFT STOP (profit {profit_pct:.1f}% ≤ {SOFT_SL_PCT:.0f}%) "
-                f"— sell {qty} of {count} ({SOFT_SL_RATIO:.0%})",
-            ):
-                state["soft_stop_done"] = True
-                _save_state(ticker, state)
-            continue
-
-        # ── (4) TAKE-PROFIT Level 3 — sell ALL remaining ─────────────────────
-        if profit_pct >= TP3_PROFIT_PCT or bid >= TP3_PRICE_TARGET:
-            _execute_sell(
-                client, ticker, count, bid, profit_pct,
-                f"TP3 — sell remaining {count} "
-                f"(profit {profit_pct:+.1f}% | price {bid}¢)",
-            )
-            _clear_state(ticker)
-            continue
-
-        # ── (5) TAKE-PROFIT Level 2 — sell 40% of initial (after TP1) ────────
-        if profit_pct >= TP2_PROFIT_PCT and tp1_done and not tp2_done:
-            qty = max(1, min(round(initial * TP2_SELL_RATIO), count))
-            if _execute_sell(
-                client, ticker, qty, bid, profit_pct,
-                f"TP2 — sell {qty} of {count} ({TP2_SELL_RATIO:.0%} of initial {initial})",
-            ):
-                state["tp2_done"] = True
-                _save_state(ticker, state)
-            continue
-
-        # ── (6) TAKE-PROFIT Level 1 — sell 30% of initial ────────────────────
-        if profit_pct >= TP1_PROFIT_PCT and not tp1_done:
-            qty = max(1, min(round(initial * TP1_SELL_RATIO), count))
-            if _execute_sell(
-                client, ticker, qty, bid, profit_pct,
-                f"TP1 — sell {qty} of {count} ({TP1_SELL_RATIO:.0%} of initial {initial})",
-            ):
-                state["tp1_done"] = True
-                _save_state(ticker, state)
-            continue
-
-        # ── (7) HOLD — log next trigger ───────────────────────────────────────
-        if profit_pct < SOFT_SL_PCT:
-            # Soft stop already fired — next trigger is hard stop
-            next_label = f"HARD STOP at {HARD_SL_PCT:.0f}% (floor {hard_sl_price:.1f}¢)"
-        elif not tp1_done:
-            next_label = f"TP1 at +{TP1_PROFIT_PCT:.0f}%"
-        elif not tp2_done:
-            next_label = f"TP2 at +{TP2_PROFIT_PCT:.0f}%"
-        else:
-            next_label = f"TP3 at +{TP3_PROFIT_PCT:.0f}% or {TP3_PRICE_TARGET}¢"
-
-        log.info(f"    Holding — next trigger: {next_label}")
+            _evaluate_favorite(client, ticker, count, bid, avg_buy, profit_pct, state)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -547,23 +567,27 @@ def main():
     mode = "DRY RUN (no real orders)" if DRY_RUN else "LIVE (real orders will be placed)"
 
     log.info("=" * 72)
-    log.info("  Kalshi Auto-Sell Bot — Tiered Take-Profit + Dynamic Stop-Loss")
+    log.info("  Kalshi Auto-Sell Bot — Dual-Mode: Favorite + Longshot")
     log.info(f"  Mode          : {mode}")
     log.info(f"  Poll interval : {POLL_INTERVAL}s")
+    log.info(f"  Mode split    : avg_buy < {LONGSHOT_THRESHOLD}¢ → LONGSHOT  |  ≥ {LONGSHOT_THRESHOLD}¢ → FAVORITE")
     log.info("─" * 72)
-    log.info("  TAKE-PROFIT")
-    log.info(f"    TP1 : profit ≥ +{TP1_PROFIT_PCT:.0f}%  → sell {TP1_SELL_RATIO:.0%} of position")
-    log.info(f"    TP2 : profit ≥ +{TP2_PROFIT_PCT:.0f}%  → sell {TP2_SELL_RATIO:.0%} of position  (after TP1)")
-    log.info(f"    TP3 : profit ≥ +{TP3_PROFIT_PCT:.0f}% OR price ≥ {TP3_PRICE_TARGET}¢  → sell ALL remaining")
-    log.info("  STOP-LOSS")
-    log.info(f"    Trailing : peak ≥ ${TRAIL_SL_THRESHOLD_1:.0f} → floor at entry+{TRAIL_SL_RATIO_1:.0%} of gain")
-    log.info(f"               peak ≥ ${TRAIL_SL_THRESHOLD_2:.0f} → floor at entry+{TRAIL_SL_RATIO_2:.0%} of gain  → sell ALL")
-    log.info(f"    Hard     : profit ≤ {HARD_SL_PCT:.0f}%  (= entry × {1+HARD_SL_PCT/100:.2f})  → sell ALL")
-    log.info(f"    Soft     : profit ≤ {SOFT_SL_PCT:.0f}%  → sell {SOFT_SL_RATIO:.0%} of remaining (once)")
+    log.info("  FAVORITE (% based)")
+    log.info(f"    TP1 +{TP1_PROFIT_PCT:.0f}% → sell {TP1_SELL_RATIO:.0%}   "
+             f"TP2 +{TP2_PROFIT_PCT:.0f}% → sell {TP2_SELL_RATIO:.0%}   "
+             f"TP3 +{TP3_PROFIT_PCT:.0f}% or {TP3_PRICE_TARGET}¢ → sell ALL")
+    log.info(f"    Trailing SL: ${TRAIL_SL_THRESHOLD_1:.0f}→{TRAIL_SL_RATIO_1:.0%} / "
+             f"${TRAIL_SL_THRESHOLD_2:.0f}→{TRAIL_SL_RATIO_2:.0%} of peak gain  |  "
+             f"Hard {HARD_SL_PCT:.0f}%  |  Soft {SOFT_SL_PCT:.0f}% ({SOFT_SL_RATIO:.0%})")
+    log.info("  LONGSHOT (price based)")
+    log.info(f"    TP1 {LS_TP1_PRICE}¢ → sell {LS_TP1_RATIO:.0%}   "
+             f"TP2 {LS_TP2_PRICE}¢ → sell {LS_TP2_RATIO:.0%}   "
+             f"TP3 {LS_TP3_PRICE}¢ → sell ALL")
+    log.info(f"    Hard SL {LS_HARD_SL_PCT:.0f}%  (no soft stop, no trailing)")
     log.info("=" * 72)
 
     if DRY_RUN:
-        log.info("  Set DRY_RUN=false in .env when you're ready to go live.")
+        log.info("  Set DRY_RUN=false in .env when ready to go live.")
         log.info("=" * 72)
 
     with httpx.Client() as client:
