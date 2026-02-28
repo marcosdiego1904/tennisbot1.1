@@ -261,6 +261,22 @@ def _init_state_table():
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sell_events (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker       TEXT    NOT NULL,
+                action       TEXT    NOT NULL,
+                mode         TEXT    NOT NULL,
+                count_sold   INTEGER NOT NULL,
+                bid_cents    INTEGER NOT NULL,
+                avg_buy      REAL    NOT NULL,
+                profit_pct   REAL    NOT NULL,
+                pnl_est      REAL,
+                dry_run      INTEGER NOT NULL DEFAULT 1,
+                executed_at  TEXT    NOT NULL
+            )
+        """)
+
 
 def _load_state(ticker: str, current_count: int) -> dict:
     now = datetime.datetime.utcnow().isoformat()
@@ -302,6 +318,29 @@ def _clear_state(ticker: str):
         conn.execute("DELETE FROM tp_state WHERE ticker=?", (ticker,))
 
 
+def _record_sell_event(
+    ticker: str, action: str, mode: str,
+    count_sold: int, bid_cents: int, avg_buy: float, profit_pct: float,
+):
+    """Persist a sell action to the sell_events table."""
+    pnl_est = round((bid_cents - avg_buy) * count_sold / 100, 2)
+    now = datetime.datetime.utcnow().isoformat()
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                INSERT INTO sell_events
+                    (ticker, action, mode, count_sold, bid_cents, avg_buy,
+                     profit_pct, pnl_est, dry_run, executed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (ticker, action, mode, count_sold, bid_cents, avg_buy,
+                 round(profit_pct, 2), pnl_est, 1 if DRY_RUN else 0, now),
+            )
+    except Exception as e:
+        log.warning(f"    Could not record sell event for {ticker}: {e}")
+
+
 # ── Trailing Stop Calculator (Favorite mode only) ─────────────────────────────
 def _calc_trailing_sl(avg_buy: float, max_bid_seen: int, initial_count: int) -> float | None:
     """
@@ -323,16 +362,19 @@ def _calc_trailing_sl(avg_buy: float, max_bid_seen: int, initial_count: int) -> 
 def _execute_sell(
     client: httpx.Client, ticker: str, count: int,
     bid: int, profit_pct: float, label: str,
+    action: str = "", mode: str = "", avg_buy: float = 0.0,
 ) -> bool:
     if DRY_RUN:
         log.info(
             f"    [DRY RUN] {label} — Would sell {count} contract(s) "
             f"at ~{bid}¢  (profit {profit_pct:+.1f}%)"
         )
+        _record_sell_event(ticker, action, mode, count, bid, avg_buy, profit_pct)
         return True
     log.info(f"    {label} — Selling {count} contract(s) at ~{bid}¢  (profit {profit_pct:+.1f}%)...")
     try:
         log.info(f"    SOLD OK: {sell_position(client, ticker, count, yes_price=bid)}")
+        _record_sell_event(ticker, action, mode, count, bid, avg_buy, profit_pct)
         return True
     except Exception as e:
         log.error(f"    SELL FAILED: {e}")
@@ -368,14 +410,16 @@ def _evaluate_favorite(
     # (1) Trailing stop
     if trailing_sl is not None and bid < trailing_sl:
         _execute_sell(client, ticker, count, bid, profit_pct,
-            f"TRAILING STOP (bid {bid}¢ < floor {trailing_sl:.1f}¢, peak {max_bid_seen}¢) — sell ALL {count}")
+            f"TRAILING STOP (bid {bid}¢ < floor {trailing_sl:.1f}¢, peak {max_bid_seen}¢) — sell ALL {count}",
+            action="TRAILING_STOP", mode="FAVORITE", avg_buy=avg_buy)
         _clear_state(ticker)
         return
 
     # (2) Hard stop — dynamic floor at avg_buy × 0.65
     if profit_pct <= HARD_SL_PCT:
         _execute_sell(client, ticker, count, bid, profit_pct,
-            f"HARD STOP (profit {profit_pct:.1f}% ≤ {HARD_SL_PCT:.0f}%, floor {hard_sl_price:.1f}¢) — sell ALL {count}")
+            f"HARD STOP (profit {profit_pct:.1f}% ≤ {HARD_SL_PCT:.0f}%, floor {hard_sl_price:.1f}¢) — sell ALL {count}",
+            action="HARD_STOP", mode="FAVORITE", avg_buy=avg_buy)
         _clear_state(ticker)
         return
 
@@ -383,7 +427,8 @@ def _evaluate_favorite(
     if profit_pct <= SOFT_SL_PCT and not soft_stop_done:
         qty = max(1, round(count * SOFT_SL_RATIO))
         if _execute_sell(client, ticker, qty, bid, profit_pct,
-                f"SOFT STOP (profit {profit_pct:.1f}% ≤ {SOFT_SL_PCT:.0f}%) — sell {qty} of {count} ({SOFT_SL_RATIO:.0%})"):
+                f"SOFT STOP (profit {profit_pct:.1f}% ≤ {SOFT_SL_PCT:.0f}%) — sell {qty} of {count} ({SOFT_SL_RATIO:.0%})",
+                action="SOFT_STOP", mode="FAVORITE", avg_buy=avg_buy):
             state["soft_stop_done"] = True
             _save_state(ticker, state)
         return
@@ -391,7 +436,8 @@ def _evaluate_favorite(
     # (4) TP3 — sell ALL remaining
     if profit_pct >= TP3_PROFIT_PCT or bid >= TP3_PRICE_TARGET:
         _execute_sell(client, ticker, count, bid, profit_pct,
-            f"TP3 — sell remaining {count} (profit {profit_pct:+.1f}% | price {bid}¢)")
+            f"TP3 — sell remaining {count} (profit {profit_pct:+.1f}% | price {bid}¢)",
+            action="TP3", mode="FAVORITE", avg_buy=avg_buy)
         _clear_state(ticker)
         return
 
@@ -399,7 +445,8 @@ def _evaluate_favorite(
     if profit_pct >= TP2_PROFIT_PCT and tp1_done and not tp2_done:
         qty = max(1, min(round(initial * TP2_SELL_RATIO), count))
         if _execute_sell(client, ticker, qty, bid, profit_pct,
-                f"TP2 — sell {qty} of {count} ({TP2_SELL_RATIO:.0%} of initial {initial})"):
+                f"TP2 — sell {qty} of {count} ({TP2_SELL_RATIO:.0%} of initial {initial})",
+                action="TP2", mode="FAVORITE", avg_buy=avg_buy):
             state["tp2_done"] = True
             _save_state(ticker, state)
         return
@@ -408,7 +455,8 @@ def _evaluate_favorite(
     if profit_pct >= TP1_PROFIT_PCT and not tp1_done:
         qty = max(1, min(round(initial * TP1_SELL_RATIO), count))
         if _execute_sell(client, ticker, qty, bid, profit_pct,
-                f"TP1 — sell {qty} of {count} ({TP1_SELL_RATIO:.0%} of initial {initial})"):
+                f"TP1 — sell {qty} of {count} ({TP1_SELL_RATIO:.0%} of initial {initial})",
+                action="TP1", mode="FAVORITE", avg_buy=avg_buy):
             state["tp1_done"] = True
             _save_state(ticker, state)
         return
@@ -449,14 +497,16 @@ def _evaluate_longshot(
     if profit_pct <= LS_HARD_SL_PCT:
         _execute_sell(client, ticker, count, bid, profit_pct,
             f"LONGSHOT HARD STOP (profit {profit_pct:.1f}% ≤ {LS_HARD_SL_PCT:.0f}%, "
-            f"floor {hard_sl_price:.1f}¢) — sell ALL {count}")
+            f"floor {hard_sl_price:.1f}¢) — sell ALL {count}",
+            action="LONGSHOT_HARD_STOP", mode="LONGSHOT", avg_buy=avg_buy)
         _clear_state(ticker)
         return
 
     # (2) Exit TP — coin-flip zone reached, edge is gone, sell everything
     if bid >= LS_EXIT_PRICE:
         _execute_sell(client, ticker, count, bid, profit_pct,
-            f"LONGSHOT EXIT (price {bid}¢ ≥ {LS_EXIT_PRICE}¢) — sell ALL {count}")
+            f"LONGSHOT EXIT (price {bid}¢ ≥ {LS_EXIT_PRICE}¢) — sell ALL {count}",
+            action="LONGSHOT_EXIT", mode="LONGSHOT", avg_buy=avg_buy)
         _clear_state(ticker)
         return
 
