@@ -213,15 +213,31 @@ def get_avg_buy_price(client: httpx.Client, ticker: str) -> float | None:
     return total_cost / total_qty if total_qty else None
 
 
-def get_yes_bid(client: httpx.Client, ticker: str) -> int | None:
-    """Current YES bid in whole cents, or None."""
+def get_market_prices(client: httpx.Client, ticker: str) -> tuple[int | None, int | None]:
+    """
+    Returns (ref_price, yes_bid) in whole cents, or (None, None).
+
+    ref_price  — last traded price; used for P&L calculation and stop-loss
+                 decisions so that wide bid/ask spreads in live in-play
+                 markets do not trigger false exits.
+    yes_bid    — current best bid; used as the floor price in sell orders
+                 so that the order actually fills at market.
+
+    In pre-match markets the spread is tight so both values are nearly
+    identical.  In live in-play markets the spread can be 30-50 ¢ wide:
+    comparing avg_buy (paid at ask) against yes_bid would show a large
+    artificial loss and incorrectly fire a stop-loss.
+    """
     try:
-        market = _get(client, f"/markets/{ticker}").get("market", {})
-        bid    = market.get("yes_bid")
-        return int(bid) if bid and int(bid) > 0 else None
+        market    = _get(client, f"/markets/{ticker}").get("market", {})
+        last_p    = market.get("last_price")
+        bid_p     = market.get("yes_bid")
+        yes_bid   = int(bid_p)  if bid_p  and int(bid_p)  > 0 else None
+        ref_price = int(last_p) if last_p and int(last_p) > 0 else yes_bid
+        return ref_price, yes_bid
     except Exception as e:
         log.warning(f"    Could not read market data for {ticker}: {e}")
-        return None
+        return None, None
 
 
 def sell_position(client: httpx.Client, ticker: str, count: int, yes_price: int) -> dict:
@@ -342,11 +358,14 @@ def _execute_sell(
 # ── Mode-specific evaluators ──────────────────────────────────────────────────
 def _evaluate_favorite(
     client: httpx.Client, ticker: str, count: int,
-    bid: int, avg_buy: float, profit_pct: float, state: dict,
+    bid: int, sell_bid: int, avg_buy: float, profit_pct: float, state: dict,
 ):
     """
     Exit logic for FAVORITE positions (avg_buy ≥ LONGSHOT_THRESHOLD).
     Priority: Trailing Stop → Hard Stop → Soft Stop → TP3 → TP2 → TP1 → Hold
+
+    bid      — ref price (last_price) used for all P&L / threshold comparisons.
+    sell_bid — actual yes_bid used as floor in sell orders so they fill at market.
     """
     initial        = state["initial"]
     tp1_done       = state["tp1_done"]
@@ -357,24 +376,26 @@ def _evaluate_favorite(
     hard_sl_price = avg_buy * (1.0 + HARD_SL_PCT / 100.0)
     trailing_sl   = _calc_trailing_sl(avg_buy, max_bid_seen, initial)
     trail_str     = f"{trailing_sl:.1f}¢" if trailing_sl is not None else "—"
+    spread_str    = f"  spread={bid - sell_bid}¢" if sell_bid != bid else ""
 
     log.info(
-        f"    [FAVORITE]  avg_buy={avg_buy:.1f}¢  bid={bid}¢  profit={profit_pct:+.1f}%  "
-        f"peak={max_bid_seen}¢  trail_sl={trail_str}  hard_sl={hard_sl_price:.1f}¢  "
+        f"    [FAVORITE]  avg_buy={avg_buy:.1f}¢  ref={bid}¢  sell_bid={sell_bid}¢{spread_str}  "
+        f"profit={profit_pct:+.1f}%  peak={max_bid_seen}¢  trail_sl={trail_str}  "
+        f"hard_sl={hard_sl_price:.1f}¢  "
         f"tp1={'✓' if tp1_done else '○'}  tp2={'✓' if tp2_done else '○'}  "
         f"soft={'✓' if soft_stop_done else '○'}"
     )
 
     # (1) Trailing stop
     if trailing_sl is not None and bid < trailing_sl:
-        _execute_sell(client, ticker, count, bid, profit_pct,
-            f"TRAILING STOP (bid {bid}¢ < floor {trailing_sl:.1f}¢, peak {max_bid_seen}¢) — sell ALL {count}")
+        _execute_sell(client, ticker, count, sell_bid, profit_pct,
+            f"TRAILING STOP (ref {bid}¢ < floor {trailing_sl:.1f}¢, peak {max_bid_seen}¢) — sell ALL {count}")
         _clear_state(ticker)
         return
 
     # (2) Hard stop — dynamic floor at avg_buy × 0.65
     if profit_pct <= HARD_SL_PCT:
-        _execute_sell(client, ticker, count, bid, profit_pct,
+        _execute_sell(client, ticker, count, sell_bid, profit_pct,
             f"HARD STOP (profit {profit_pct:.1f}% ≤ {HARD_SL_PCT:.0f}%, floor {hard_sl_price:.1f}¢) — sell ALL {count}")
         _clear_state(ticker)
         return
@@ -382,7 +403,7 @@ def _evaluate_favorite(
     # (3) Soft stop — partial exit
     if profit_pct <= SOFT_SL_PCT and not soft_stop_done:
         qty = max(1, round(count * SOFT_SL_RATIO))
-        if _execute_sell(client, ticker, qty, bid, profit_pct,
+        if _execute_sell(client, ticker, qty, sell_bid, profit_pct,
                 f"SOFT STOP (profit {profit_pct:.1f}% ≤ {SOFT_SL_PCT:.0f}%) — sell {qty} of {count} ({SOFT_SL_RATIO:.0%})"):
             state["soft_stop_done"] = True
             _save_state(ticker, state)
@@ -390,15 +411,15 @@ def _evaluate_favorite(
 
     # (4) TP3 — sell ALL remaining
     if profit_pct >= TP3_PROFIT_PCT or bid >= TP3_PRICE_TARGET:
-        _execute_sell(client, ticker, count, bid, profit_pct,
-            f"TP3 — sell remaining {count} (profit {profit_pct:+.1f}% | price {bid}¢)")
+        _execute_sell(client, ticker, count, sell_bid, profit_pct,
+            f"TP3 — sell remaining {count} (profit {profit_pct:+.1f}% | ref {bid}¢)")
         _clear_state(ticker)
         return
 
     # (5) TP2 — sell 40% of initial (after TP1)
     if profit_pct >= TP2_PROFIT_PCT and tp1_done and not tp2_done:
         qty = max(1, min(round(initial * TP2_SELL_RATIO), count))
-        if _execute_sell(client, ticker, qty, bid, profit_pct,
+        if _execute_sell(client, ticker, qty, sell_bid, profit_pct,
                 f"TP2 — sell {qty} of {count} ({TP2_SELL_RATIO:.0%} of initial {initial})"):
             state["tp2_done"] = True
             _save_state(ticker, state)
@@ -407,7 +428,7 @@ def _evaluate_favorite(
     # (6) TP1 — sell 30% of initial
     if profit_pct >= TP1_PROFIT_PCT and not tp1_done:
         qty = max(1, min(round(initial * TP1_SELL_RATIO), count))
-        if _execute_sell(client, ticker, qty, bid, profit_pct,
+        if _execute_sell(client, ticker, qty, sell_bid, profit_pct,
                 f"TP1 — sell {qty} of {count} ({TP1_SELL_RATIO:.0%} of initial {initial})"):
             state["tp1_done"] = True
             _save_state(ticker, state)
@@ -427,7 +448,7 @@ def _evaluate_favorite(
 
 def _evaluate_longshot(
     client: httpx.Client, ticker: str, count: int,
-    bid: int, avg_buy: float, profit_pct: float, state: dict,
+    bid: int, sell_bid: int, avg_buy: float, profit_pct: float, state: dict,
 ):
     """
     Exit logic for LONGSHOT positions (avg_buy < LONGSHOT_THRESHOLD).
@@ -436,18 +457,23 @@ def _evaluate_longshot(
     the coin-flip zone the original edge is gone — sell everything and move on.
     Partial exits are skipped: they cut the best positions while running.
 
+    bid      — ref price (last_price) used for all P&L / threshold comparisons.
+    sell_bid — actual yes_bid used as floor in sell orders so they fill at market.
+
     Priority: Hard Stop → Exit TP → Hold
     """
     hard_sl_price = avg_buy * (1.0 + LS_HARD_SL_PCT / 100.0)
+    spread_str    = f"  spread={bid - sell_bid}¢" if sell_bid != bid else ""
 
     log.info(
-        f"    [LONGSHOT]  avg_buy={avg_buy:.1f}¢  bid={bid}¢  profit={profit_pct:+.1f}%  "
-        f"exit_target={LS_EXIT_PRICE}¢  hard_sl={hard_sl_price:.1f}¢ ({LS_HARD_SL_PCT:.0f}%)"
+        f"    [LONGSHOT]  avg_buy={avg_buy:.1f}¢  ref={bid}¢  sell_bid={sell_bid}¢{spread_str}  "
+        f"profit={profit_pct:+.1f}%  exit_target={LS_EXIT_PRICE}¢  "
+        f"hard_sl={hard_sl_price:.1f}¢ ({LS_HARD_SL_PCT:.0f}%)"
     )
 
     # (1) Hard stop — accept big loss, recover what's left
     if profit_pct <= LS_HARD_SL_PCT:
-        _execute_sell(client, ticker, count, bid, profit_pct,
+        _execute_sell(client, ticker, count, sell_bid, profit_pct,
             f"LONGSHOT HARD STOP (profit {profit_pct:.1f}% ≤ {LS_HARD_SL_PCT:.0f}%, "
             f"floor {hard_sl_price:.1f}¢) — sell ALL {count}")
         _clear_state(ticker)
@@ -455,8 +481,8 @@ def _evaluate_longshot(
 
     # (2) Exit TP — coin-flip zone reached, edge is gone, sell everything
     if bid >= LS_EXIT_PRICE:
-        _execute_sell(client, ticker, count, bid, profit_pct,
-            f"LONGSHOT EXIT (price {bid}¢ ≥ {LS_EXIT_PRICE}¢) — sell ALL {count}")
+        _execute_sell(client, ticker, count, sell_bid, profit_pct,
+            f"LONGSHOT EXIT (ref {bid}¢ ≥ {LS_EXIT_PRICE}¢) — sell ALL {count}")
         _clear_state(ticker)
         return
 
@@ -494,29 +520,34 @@ def run_scan(client: httpx.Client):
 
         log.info(f"  [{ticker}]  {count} contract(s)")
 
-        avg_buy = get_avg_buy_price(client, ticker)
-        bid     = get_yes_bid(client, ticker)
+        avg_buy              = get_avg_buy_price(client, ticker)
+        ref_price, yes_bid   = get_market_prices(client, ticker)
 
         if avg_buy is None:
             log.warning("    Skipping — could not determine average buy price.")
             continue
-        if bid is None:
-            log.warning("    Skipping — no YES bid available (market may be illiquid).")
+        if ref_price is None:
+            log.warning("    Skipping — no market price available (market may be illiquid).")
             continue
 
-        profit_pct = ((bid - avg_buy) / avg_buy) * 100
+        # Use last_price (ref_price) for P&L decisions; yes_bid for sell orders.
+        # In live in-play markets the bid/ask spread can be 30-50 ¢ wide:
+        # comparing avg_buy (paid at ask) against yes_bid would produce a large
+        # artificial loss and incorrectly trigger a stop-loss.
+        sell_bid   = yes_bid if yes_bid is not None else ref_price
+        profit_pct = ((ref_price - avg_buy) / avg_buy) * 100
 
-        # Load state and refresh peak bid
+        # Load state and refresh peak ref_price
         state = _load_state(ticker, count)
-        if bid > state["max_bid_seen"]:
-            state["max_bid_seen"] = bid
+        if ref_price > state["max_bid_seen"]:
+            state["max_bid_seen"] = ref_price
             _save_state(ticker, state)
 
         # Route to the correct exit strategy
         if avg_buy < LONGSHOT_THRESHOLD:
-            _evaluate_longshot(client, ticker, count, bid, avg_buy, profit_pct, state)
+            _evaluate_longshot(client, ticker, count, ref_price, sell_bid, avg_buy, profit_pct, state)
         else:
-            _evaluate_favorite(client, ticker, count, bid, avg_buy, profit_pct, state)
+            _evaluate_favorite(client, ticker, count, ref_price, sell_bid, avg_buy, profit_pct, state)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
