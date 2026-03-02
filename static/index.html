@@ -24,6 +24,23 @@
         </div>
     </header>
 
+    <!-- Bot Controls bar -->
+    <div class="bot-controls-bar" id="botControlsBar">
+        <div class="bot-control-item">
+            <span class="bot-label">Auto-Sell Bot</span>
+            <span class="bot-status-dot" id="botDot"></span>
+            <span class="bot-status-text" id="botStatusText">—</span>
+            <button class="btn btn-sm" id="btnBotToggle" onclick="toggleBot()">—</button>
+        </div>
+        <div class="bot-control-divider"></div>
+        <div class="bot-control-item">
+            <span class="bot-label">Automation</span>
+            <span class="bot-status-dot" id="automationDot"></span>
+            <span class="bot-status-text" id="automationStatusText">—</span>
+            <button class="btn btn-sm" id="btnAutomationToggle" onclick="toggleAutomation()">—</button>
+        </div>
+    </div>
+
     <!-- Summary bar — clickable filters -->
     <div class="summary-bar" id="summaryBar" style="display: none;">
         <div class="summary-card buy clickable active" onclick="toggleFilter('BUY')">

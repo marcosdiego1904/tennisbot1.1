@@ -26,6 +26,10 @@ document.addEventListener("DOMContentLoaded", () => {
             if (b.event_ticker) trackedTickers.add(b.event_ticker);
         }
     }).catch(() => {});
+
+    // Load bot/automation status on page load, then poll every 15 seconds
+    loadBotControls();
+    setInterval(loadBotControls, 15000);
 });
 
 
@@ -845,4 +849,73 @@ function renderMatchCard(r) {
             ${pricesHTML}
             ${trackHTML}
         </div>`;
+}
+
+
+// --- Bot Controls ---
+
+async function loadBotControls() {
+    try {
+        const [botResp, autoResp] = await Promise.all([
+            fetch("/api/bot/status"),
+            fetch("/api/automation/status"),
+        ]);
+        const botData  = await botResp.json();
+        const autoData = await autoResp.json();
+
+        _updateBotDot("botDot", "botStatusText", "btnBotToggle", botData.enabled);
+        _updateBotDot(
+            "automationDot", "automationStatusText", "btnAutomationToggle",
+            autoData.scheduler?.running ?? false
+        );
+    } catch (_) {}
+}
+
+function _updateBotDot(dotId, textId, btnId, isRunning) {
+    const dot  = document.getElementById(dotId);
+    const text = document.getElementById(textId);
+    const btn  = document.getElementById(btnId);
+    if (!dot || !text || !btn) return;
+
+    if (isRunning) {
+        dot.className  = "bot-status-dot dot-on";
+        text.textContent = "Running";
+        text.style.color = "#3fb950";
+        btn.textContent  = "Pause";
+        btn.className    = "btn btn-sm btn-danger-outline";
+    } else {
+        dot.className  = "bot-status-dot dot-off";
+        text.textContent = "Paused";
+        text.style.color = "#8b949e";
+        btn.textContent  = "Start";
+        btn.className    = "btn btn-sm btn-success-outline";
+    }
+}
+
+async function toggleBot() {
+    const btn = document.getElementById("btnBotToggle");
+    const isPaused = btn.textContent.trim() === "Start";
+    btn.disabled = true;
+
+    try {
+        await fetch(isPaused ? "/api/bot/enable" : "/api/bot/disable", { method: "POST" });
+        await loadBotControls();
+    } catch (_) {
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function toggleAutomation() {
+    const btn = document.getElementById("btnAutomationToggle");
+    const isPaused = btn.textContent.trim() === "Start";
+    btn.disabled = true;
+
+    try {
+        await fetch(isPaused ? "/api/automation/start" : "/api/automation/stop", { method: "POST" });
+        await loadBotControls();
+    } catch (_) {
+    } finally {
+        btn.disabled = false;
+    }
 }
