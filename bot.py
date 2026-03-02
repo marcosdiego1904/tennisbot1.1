@@ -277,6 +277,30 @@ def _init_state_table():
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        # Default to enabled on first run
+        conn.execute(
+            "INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('bot_enabled', 'true')"
+        )
+        conn.commit()
+
+
+def _is_bot_enabled() -> bool:
+    """Check the bot_enabled flag in SQLite. Returns True if the bot should scan."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT value FROM bot_settings WHERE key='bot_enabled'"
+            ).fetchone()
+            return row is None or row[0] == "true"
+    except Exception:
+        return True  # default to enabled on DB error
+
 
 def _load_state(ticker: str, current_count: int) -> dict:
     now = datetime.datetime.utcnow().isoformat()
@@ -583,10 +607,13 @@ def main():
 
     with httpx.Client() as client:
         while True:
-            now = datetime.datetime.now().strftime("%H:%M:%S")
-            log.info(f"─── Scan @ {now} " + "─" * 47)
-            run_scan(client)
-            log.info(f"Sleeping {POLL_INTERVAL}s...\n")
+            if _is_bot_enabled():
+                now = datetime.datetime.now().strftime("%H:%M:%S")
+                log.info(f"─── Scan @ {now} " + "─" * 47)
+                run_scan(client)
+                log.info(f"Sleeping {POLL_INTERVAL}s...\n")
+            else:
+                log.info("Bot is PAUSED — toggle via the dashboard to resume.")
             time.sleep(POLL_INTERVAL)
 
 

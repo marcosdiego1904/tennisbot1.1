@@ -233,6 +233,62 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
+# Auto-sell bot toggle endpoints
+# ---------------------------------------------------------------------------
+
+async def _get_bot_enabled() -> bool:
+    import aiosqlite, os
+    db_path = os.getenv("DB_PATH", "data/orders.db")
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL
+            )
+        """)
+        await db.execute(
+            "INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('bot_enabled', 'true')"
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT value FROM bot_settings WHERE key='bot_enabled'"
+        ) as cur:
+            row = await cur.fetchone()
+            return row is None or row[0] == "true"
+
+
+async def _set_bot_enabled(enabled: bool) -> None:
+    import aiosqlite, os
+    db_path = os.getenv("DB_PATH", "data/orders.db")
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO bot_settings (key, value) VALUES ('bot_enabled', ?)",
+            ("true" if enabled else "false",),
+        )
+        await db.commit()
+
+
+@router.get("/bot/status")
+async def bot_status():
+    """Return whether the auto-sell bot is enabled or paused."""
+    enabled = await _get_bot_enabled()
+    return {"enabled": enabled, "status": "running" if enabled else "paused"}
+
+
+@router.post("/bot/enable")
+async def bot_enable():
+    """Enable the auto-sell bot (resumes position scanning)."""
+    await _set_bot_enabled(True)
+    return {"enabled": True, "status": "running"}
+
+
+@router.post("/bot/disable")
+async def bot_disable():
+    """Pause the auto-sell bot (stops position scanning without killing the process)."""
+    await _set_bot_enabled(False)
+    return {"enabled": False, "status": "paused"}
+
+
+# ---------------------------------------------------------------------------
 # Automation endpoints
 # ---------------------------------------------------------------------------
 
