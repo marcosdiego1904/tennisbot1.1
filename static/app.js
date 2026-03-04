@@ -811,6 +811,23 @@ async function fetchDebugLiveScores() {
             }
         }
 
+        // All live matches parsed
+        if (data.all_live_matches !== undefined) {
+            html += `<h4 style="color: #3fb950;">All Live Matches Detected (${data.all_live_matches.length})</h4>`;
+            if (data.all_live_matches.length === 0) {
+                html += '<p style="color:#8b949e;">No matches parsed — parsing may have field name issues.</p>';
+            } else {
+                html += '<div style="background:#0d1117; padding:8px; border-radius:4px; max-height:300px; overflow-y:auto;">';
+                for (const m of data.all_live_matches) {
+                    html += `<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #21262d; font-size:12px;">`;
+                    html += `<span style="color:#e6edf3;"><strong>${m.home}</strong> vs <strong>${m.away}</strong></span>`;
+                    html += `<span style="color:#79c0ff; margin-left:12px;">Sets: ${m.sets} | Games: ${m.games}</span>`;
+                    html += `</div>`;
+                }
+                html += '</div>';
+            }
+        }
+
         // Live score found
         if (data.live_score_found) {
             html += '<h4 style="color: #58a6ff;">Live Score Found</h4>';
