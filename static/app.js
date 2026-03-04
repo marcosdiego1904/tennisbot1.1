@@ -761,6 +761,99 @@ async function fetchDebug() {
 }
 
 
+// --- Debug: Live Scores API ---
+
+async function fetchDebugLiveScores() {
+    const container = document.getElementById("debugLiveScoresContainer");
+    container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Fetching live scores API data...</p></div>';
+
+    try {
+        const resp = await fetch("/api/debug/live-scores");
+        const data = await resp.json();
+
+        let html = '<div class="manual-panel" style="margin-top: 12px; border-radius: 8px;">';
+        html += '<h3>Live Scores API Debug</h3>';
+
+        // Request info
+        if (data.request) {
+            html += '<h4 style="color: #58a6ff;">Request</h4>';
+            html += `<p>Searching for live match: <strong>${data.request.fav}</strong> vs <strong>${data.request.dog}</strong></p>`;
+        }
+
+        // Errors
+        if (data.errors && data.errors.length > 0) {
+            html += '<h4 style="color: #f85149;">Errors</h4>';
+            for (const e of data.errors) {
+                html += `<p style="color:#f85149; margin:4px 0;"><strong>✗</strong> ${e}</p>`;
+            }
+        }
+
+        // Endpoints tested
+        if (data.endpoints_tested) {
+            html += '<h4 style="color: #d29922;">Endpoints Tested</h4>';
+            for (const [endpoint, result] of Object.entries(data.endpoints_tested)) {
+                const status = result.status;
+                const statusColor = status === 200 ? '#3fb950' : '#f85149';
+                html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px;">`;
+                html += `<p style="margin:4px 0; color:${statusColor};"><strong>${endpoint}</strong> — HTTP ${status}</p>`;
+                if (result.live_events_count !== undefined) {
+                    html += `<p style="margin:4px 0; color:#79c0ff; font-size:12px;">Live events: ${result.live_events_count}</p>`;
+                }
+                if (result.data_keys) {
+                    html += `<p style="margin:4px 0; color:#79c0ff; font-size:12px;">Keys: ${result.data_keys}</p>`;
+                }
+                if (result.preview) {
+                    html += `<details style="margin-top:4px;"><summary style="cursor:pointer; color:#79c0ff; font-size:12px;">Preview JSON</summary>`;
+                    html += `<pre style="background:#0a0e27; padding:6px; font-size:10px; overflow-x:auto; max-height:300px; margin-top:4px;">${escapeHtml(result.preview)}</pre>`;
+                    html += `</details>`;
+                }
+                html += `</div>`;
+            }
+        }
+
+        // Live score found
+        if (data.live_score_found) {
+            html += '<h4 style="color: #58a6ff;">Live Score Found</h4>';
+            if (data.live_score_found.status === "found") {
+                const s = data.live_score_found;
+                html += `<div style="background:#0d1117; padding:8px; margin:4px 0; border-radius:4px;">`;
+                html += `<p><strong style="color:#3fb950;">${s.home}</strong> ${s.home_sets}-${s.away_sets} <strong style="color:#3fb950;">${s.away}</strong></p>`;
+                html += `<p style="font-size:12px; color:#79c0ff;">Set ${s.current_set}: ${s.home_games}-${s.away_games} (games)</p>`;
+                html += `<p style="font-size:12px; color:#d29922;">Fav is home: ${s.fav_is_home ? 'YES' : 'NO'}</p>`;
+                html += `<p style="font-size:12px; color:#d29922;"><strong>Momentum score: ${s.momentum_score}</strong> (0=fav winning, 3=dog dominant)</p>`;
+                html += `</div>`;
+            } else {
+                html += `<p style="color:#8b949e;">${data.live_score_found.note}</p>`;
+            }
+        }
+
+        // Live score error
+        if (data.live_score_error) {
+            html += '<h4 style="color: #f85149;">Live Score Error</h4>';
+            html += `<p style="color:#f85149;">${data.live_score_error}</p>`;
+        }
+
+        // API key check
+        if (data.error) {
+            html += '<h4 style="color: #f85149;">Configuration Error</h4>';
+            html += `<p style="color:#f85149; margin:4px 0;"><strong>✗ ${data.error}</strong></p>`;
+            html += `<p style="color:#8b949e; font-size:12px; margin:4px 0;">${data.note}</p>`;
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div style="color:#f85149; padding:12px;">Debug error: ${err.message}</div>`;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+
 // --- Render a single match card ---
 
 function renderMatchCard(r) {

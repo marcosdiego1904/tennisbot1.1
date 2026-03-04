@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Kalshi Auto-Sell Bot — Dual-Mode: Favorite + Longshot
-======================================================
+Kalshi Auto-Sell Bot — Tri-Mode: Favorite + Longshot + Pivot
+=============================================================
 Automatically detects whether each position is a FAVORITE (avg_buy ≥ 30¢)
 or a LONGSHOT (avg_buy < 30¢) and applies a completely different exit
 strategy for each.
@@ -37,6 +37,23 @@ MODE B — LONGSHOT  (avg_buy < LONGSHOT_THRESHOLD, default 30¢)
     (No soft stop, no trailing: longshots are volatile by nature)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODE C — PIVOT TRADE  (after SL exit on favorite)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  When a favorite position hits hard/soft SL AND the underdog is actually
+  winning (confirmed via live score data), the bot can buy the underdog
+  with a fraction of the recovered capital.
+
+  Conditions (ALL must be true):
+    1. Hard or soft SL just triggered on a favorite position
+    2. Live score confirms underdog is winning (momentum_score ≥ 2)
+    3. Underdog price is in value zone (25¢–50¢)
+    4. Momentum: favorite price dropped ≥ 25% from peak
+
+  Sizing: 50–60% of recovered capital (scales with underdog price)
+  Exit:   Treated as LONGSHOT (exit at 57¢, hard SL at -40%)
+  Limit:  Max 1 pivot per event (no double pivots)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SHARED MECHANICS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   • Mode is detected automatically from avg_buy each scan.
@@ -49,6 +66,8 @@ CONFIGURATION  (see .env.example for the full list)
   LONGSHOT_THRESHOLD                   ¢ below which longshot mode is used (default: 30)
   DRY_RUN                              true = simulate (default: true)
   POLL_INTERVAL                        seconds between scans (default: 10)
+  PIVOT_ENABLED                        true = enable pivot trades (default: false)
+  TENNISAPI_KEY                        RapidAPI key for live scores (required for pivot)
 
 USAGE
   cp .env.example .env   # fill in credentials + tune parameters
@@ -64,6 +83,7 @@ import sqlite3
 import base64
 import logging
 import datetime
+import asyncio
 import httpx
 from pathlib import Path
 from cryptography.hazmat.primitives import hashes, serialization
@@ -110,6 +130,18 @@ TRAIL_SL_RATIO_2     = float(os.getenv("TRAIL_SL_RATIO_2",     "0.50"))
 # the mispricing that justified the bet is gone — sell everything and move on.
 LS_EXIT_PRICE  = int(os.getenv(  "LS_EXIT_PRICE",  "57"))   # ¢ — sell 100% here
 LS_HARD_SL_PCT = float(os.getenv("LS_HARD_SL_PCT", "-60"))  # accept big loss
+
+# ── PIVOT TRADE config ──────────────────────────────────────────────────────
+# After a favorite SL fires, optionally buy the underdog if live score confirms
+# the underdog is actually winning. Requires TENNISAPI_KEY for live scores.
+PIVOT_ENABLED         = os.getenv("PIVOT_ENABLED", "false").lower() == "true"
+PIVOT_CAPITAL_RATIO   = float(os.getenv("PIVOT_CAPITAL_RATIO",   "0.60"))  # % of recovered capital
+PIVOT_MIN_DOG_PRICE   = int(os.getenv(  "PIVOT_MIN_DOG_PRICE",  "25"))    # ¢ — too cheap = too risky
+PIVOT_MAX_DOG_PRICE   = int(os.getenv(  "PIVOT_MAX_DOG_PRICE",  "50"))    # ¢ — above 50 = no value
+PIVOT_MIN_MOMENTUM    = float(os.getenv("PIVOT_MIN_MOMENTUM",   "0.25"))  # 25% drop from peak
+PIVOT_MIN_SCORE_MOMENTUM = int(os.getenv("PIVOT_MIN_SCORE_MOMENTUM", "2")) # momentum_score ≥ 2
+PIVOT_HARD_SL_PCT     = float(os.getenv("PIVOT_HARD_SL_PCT",    "-35"))   # tighter than longshot
+PIVOT_EXIT_PRICE      = int(os.getenv(  "PIVOT_EXIT_PRICE",     "57"))    # ¢ — same as longshot exit
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 Path("logs").mkdir(exist_ok=True)
@@ -277,6 +309,20 @@ def _init_state_table():
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+        # Pivot trade tracking: records completed pivots to enforce max 1 per event
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pivot_trades (
+                event_ticker    TEXT PRIMARY KEY,
+                fav_ticker      TEXT NOT NULL,
+                dog_ticker      TEXT NOT NULL,
+                fav_sell_price  INTEGER NOT NULL,
+                dog_buy_price   INTEGER NOT NULL,
+                contracts       INTEGER NOT NULL,
+                capital_used    REAL NOT NULL,
+                created_at      TEXT NOT NULL
+            )
+        """)
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_settings (
                 key   TEXT PRIMARY KEY,
@@ -422,6 +468,8 @@ def _evaluate_favorite(
         _execute_sell(client, ticker, count, sell_bid, profit_pct,
             f"HARD STOP (profit {profit_pct:.1f}% ≤ {HARD_SL_PCT:.0f}%, floor {hard_sl_price:.1f}¢) — sell ALL {count}")
         _clear_state(ticker)
+        # Evaluate pivot trade opportunity
+        _evaluate_pivot(client, ticker, count, sell_bid, avg_buy, max_bid_seen)
         return
 
     # (3) Soft stop — partial exit
@@ -517,6 +565,241 @@ def _evaluate_longshot(
     )
 
 
+# ── Pivot Trade Logic ────────────────────────────────────────────────────────
+
+def _get_event_ticker(client: httpx.Client, ticker: str) -> str | None:
+    """Extract event_ticker from a market ticker via Kalshi API."""
+    try:
+        market = _get(client, f"/markets/{ticker}").get("market", {})
+        return market.get("event_ticker")
+    except Exception as e:
+        log.warning(f"    Could not get event_ticker for {ticker}: {e}")
+        return None
+
+
+def _get_sibling_ticker(client: httpx.Client, event_ticker: str, exclude_ticker: str) -> tuple[str | None, int | None]:
+    """
+    Find the other market in the same event (the underdog's market).
+    Returns (ticker, yes_ask_price) or (None, None).
+    """
+    try:
+        data = _get(client, f"/events/{event_ticker}")
+        markets = data.get("event", {}).get("markets", [])
+        if not markets:
+            # Try fetching markets for this event
+            data = _get(client, "/markets", params={"event_ticker": event_ticker, "limit": 10})
+            markets = data.get("markets", [])
+
+        for m in markets:
+            t = m.get("ticker", "")
+            if t and t != exclude_ticker:
+                # Get current price of the underdog market
+                price = m.get("last_price") or m.get("yes_ask") or m.get("yes_bid")
+                return t, int(price) if price else None
+
+        return None, None
+    except Exception as e:
+        log.warning(f"    Could not find sibling market for event {event_ticker}: {e}")
+        return None, None
+
+
+def _extract_players_from_ticker(ticker: str) -> tuple[str, str]:
+    """
+    Best-effort extraction of player names from Kalshi ticker.
+    Tickers look like: KXATPMATCH-25FEB-T-SINNER
+    The last part is the YES player's last name.
+    """
+    parts = ticker.upper().split("-")
+    if len(parts) >= 4:
+        return parts[-1].title(), ""  # Return the YES player name
+    return "", ""
+
+
+def _already_pivoted(event_ticker: str) -> bool:
+    """Check if we already did a pivot trade for this event."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT event_ticker FROM pivot_trades WHERE event_ticker=?",
+                (event_ticker,),
+            ).fetchone()
+            return row is not None
+    except Exception:
+        return False
+
+
+def _record_pivot(event_ticker: str, fav_ticker: str, dog_ticker: str,
+                  fav_sell_price: int, dog_buy_price: int, contracts: int, capital: float):
+    """Record a pivot trade in the database."""
+    now = datetime.datetime.utcnow().isoformat()
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO pivot_trades "
+                "(event_ticker, fav_ticker, dog_ticker, fav_sell_price, dog_buy_price, "
+                "contracts, capital_used, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (event_ticker, fav_ticker, dog_ticker, fav_sell_price, dog_buy_price,
+                 contracts, capital, now),
+            )
+    except Exception as e:
+        log.error(f"    Failed to record pivot trade: {e}")
+
+
+def _buy_position(client: httpx.Client, ticker: str, count: int, yes_price: int) -> dict:
+    """Place a limit buy order for the pivot trade."""
+    return _post(client, "/portfolio/orders", {
+        "action": "buy",
+        "type": "limit",
+        "ticker": ticker,
+        "count": count,
+        "side": "yes",
+        "yes_price": max(1, yes_price),
+        "client_order_id": str(uuid.uuid4()),
+    })
+
+
+def _evaluate_pivot(
+    client: httpx.Client, fav_ticker: str, count_sold: int,
+    sell_price: int, avg_buy: float, max_bid_seen: int,
+):
+    """
+    Evaluate whether to execute a pivot trade after a favorite SL fires.
+
+    Conditions:
+      1. Pivot is enabled (PIVOT_ENABLED=true)
+      2. Live score confirms underdog is winning (momentum_score ≥ PIVOT_MIN_SCORE_MOMENTUM)
+      3. Underdog price is in value zone (PIVOT_MIN_DOG_PRICE–PIVOT_MAX_DOG_PRICE)
+      4. Price momentum: favorite dropped ≥ PIVOT_MIN_MOMENTUM from peak
+      5. No previous pivot for this event
+    """
+    if not PIVOT_ENABLED:
+        return
+
+    # Check momentum from price (no score data needed for this)
+    if max_bid_seen <= 0:
+        return
+    momentum_pct = (max_bid_seen - sell_price) / max_bid_seen
+    if momentum_pct < PIVOT_MIN_MOMENTUM:
+        log.info(f"    [PIVOT] Momentum too low: {momentum_pct:.1%} < {PIVOT_MIN_MOMENTUM:.0%} required")
+        return
+
+    # Find the event and sibling (underdog) market
+    event_ticker = _get_event_ticker(client, fav_ticker)
+    if not event_ticker:
+        log.info("    [PIVOT] Could not determine event_ticker — skip pivot")
+        return
+
+    if _already_pivoted(event_ticker):
+        log.info(f"    [PIVOT] Already pivoted on event {event_ticker} — no double pivots")
+        return
+
+    dog_ticker, dog_price = _get_sibling_ticker(client, event_ticker, fav_ticker)
+    if not dog_ticker or not dog_price:
+        log.info("    [PIVOT] Could not find underdog market — skip pivot")
+        return
+
+    # Check underdog price is in value zone
+    if dog_price < PIVOT_MIN_DOG_PRICE or dog_price > PIVOT_MAX_DOG_PRICE:
+        log.info(
+            f"    [PIVOT] Underdog price {dog_price}¢ outside value zone "
+            f"({PIVOT_MIN_DOG_PRICE}–{PIVOT_MAX_DOG_PRICE}¢) — skip pivot"
+        )
+        return
+
+    # Check live score (the key differentiator for EV+)
+    try:
+        from app.live_scores import find_live_score
+        # Extract player names — best effort from ticker
+        fav_name, _ = _extract_players_from_ticker(fav_ticker)
+        dog_name, _ = _extract_players_from_ticker(dog_ticker)
+
+        if fav_name and dog_name:
+            result = asyncio.run(find_live_score(fav_name, dog_name))
+            if result:
+                score, fav_is_home = result
+                momentum = score.momentum_score(fav_is_home)
+                log.info(
+                    f"    [PIVOT] Live score: {score.home_player} {score.home_sets}-{score.away_sets} "
+                    f"{score.away_player} (set {score.current_set}, games {score.home_games}-{score.away_games}) "
+                    f"momentum_score={momentum}"
+                )
+                if momentum < PIVOT_MIN_SCORE_MOMENTUM:
+                    log.info(
+                        f"    [PIVOT] Score momentum {momentum} < {PIVOT_MIN_SCORE_MOMENTUM} required "
+                        f"— underdog not clearly winning, skip pivot"
+                    )
+                    return
+            else:
+                log.info("    [PIVOT] No live score found — proceeding on price momentum only")
+                # Without score data, require stronger price momentum
+                if momentum_pct < 0.35:
+                    log.info(f"    [PIVOT] No score data + momentum only {momentum_pct:.1%} < 35% — skip")
+                    return
+        else:
+            log.info("    [PIVOT] Could not extract player names from tickers — using price momentum only")
+            if momentum_pct < 0.35:
+                log.info(f"    [PIVOT] No player names + momentum only {momentum_pct:.1%} < 35% — skip")
+                return
+    except ImportError:
+        log.warning("    [PIVOT] app.live_scores not available — using price momentum only")
+        if momentum_pct < 0.35:
+            return
+    except Exception as e:
+        log.warning(f"    [PIVOT] Live score check failed: {e} — using price momentum only")
+        if momentum_pct < 0.35:
+            return
+
+    # Calculate pivot sizing
+    capital_recovered = (sell_price / 100.0) * count_sold
+
+    # Scale ratio by underdog price (cheaper = riskier = less capital)
+    if dog_price <= 30:
+        ratio = 0.50
+    elif dog_price <= 40:
+        ratio = PIVOT_CAPITAL_RATIO  # default 0.60
+    else:
+        ratio = 0.45
+
+    capital_pivot = capital_recovered * ratio
+    contracts_pivot = int(capital_pivot / (dog_price / 100.0))
+
+    if contracts_pivot < 1:
+        log.info(f"    [PIVOT] Not enough capital for even 1 contract — skip")
+        return
+
+    reserve = capital_recovered - capital_pivot
+
+    log.info(
+        f"    [PIVOT] ═══ PIVOT TRADE SIGNAL ═══\n"
+        f"    [PIVOT] Favorite sold: {fav_ticker} at {sell_price}¢ ({count_sold} contracts)\n"
+        f"    [PIVOT] Capital recovered: ${capital_recovered:.2f}\n"
+        f"    [PIVOT] Underdog: {dog_ticker} at {dog_price}¢\n"
+        f"    [PIVOT] Momentum: {momentum_pct:.1%} drop from peak {max_bid_seen}¢\n"
+        f"    [PIVOT] Sizing: {ratio:.0%} of recovered = ${capital_pivot:.2f} → {contracts_pivot} contracts\n"
+        f"    [PIVOT] Reserve (safe): ${reserve:.2f} ({1-ratio:.0%})\n"
+        f"    [PIVOT] Exit plan: TP at {PIVOT_EXIT_PRICE}¢ | SL at {PIVOT_HARD_SL_PCT:.0f}%"
+    )
+
+    if DRY_RUN:
+        log.info(
+            f"    [DRY RUN] [PIVOT] Would BUY {contracts_pivot} contracts of {dog_ticker} "
+            f"at {dog_price}¢ (${capital_pivot:.2f})"
+        )
+        _record_pivot(event_ticker, fav_ticker, dog_ticker, sell_price, dog_price,
+                      contracts_pivot, capital_pivot)
+        return
+
+    # Execute the pivot buy
+    try:
+        log.info(f"    [PIVOT] Placing BUY order: {contracts_pivot}x {dog_ticker} @ {dog_price}¢...")
+        result = _buy_position(client, dog_ticker, contracts_pivot, dog_price)
+        log.info(f"    [PIVOT] BUY OK: {result}")
+        _record_pivot(event_ticker, fav_ticker, dog_ticker, sell_price, dog_price,
+                      contracts_pivot, capital_pivot)
+    except Exception as e:
+        log.error(f"    [PIVOT] BUY FAILED: {e}")
+
+
 # ── Main Scan Logic ───────────────────────────────────────────────────────────
 def run_scan(client: httpx.Client):
     """
@@ -585,7 +868,7 @@ def main():
     mode = "DRY RUN (no real orders)" if DRY_RUN else "LIVE (real orders will be placed)"
 
     log.info("=" * 72)
-    log.info("  Kalshi Auto-Sell Bot — Dual-Mode: Favorite + Longshot")
+    log.info("  Kalshi Auto-Sell Bot — Tri-Mode: Favorite + Longshot + Pivot")
     log.info(f"  Mode          : {mode}")
     log.info(f"  Poll interval : {POLL_INTERVAL}s")
     log.info(f"  Mode split    : avg_buy < {LONGSHOT_THRESHOLD}¢ → LONGSHOT  |  ≥ {LONGSHOT_THRESHOLD}¢ → FAVORITE")
@@ -599,6 +882,16 @@ def main():
              f"Hard {HARD_SL_PCT:.0f}%  |  Soft {SOFT_SL_PCT:.0f}% ({SOFT_SL_RATIO:.0%})")
     log.info("  LONGSHOT (single clean exit)")
     log.info(f"    Exit at {LS_EXIT_PRICE}¢ → sell ALL  |  Hard SL {LS_HARD_SL_PCT:.0f}%  (no partials, no trailing)")
+    log.info("─" * 72)
+    if PIVOT_ENABLED:
+        log.info("  PIVOT TRADE (enabled)")
+        log.info(f"    Capital: {PIVOT_CAPITAL_RATIO:.0%} of recovered  |  "
+                 f"Dog price zone: {PIVOT_MIN_DOG_PRICE}–{PIVOT_MAX_DOG_PRICE}¢")
+        log.info(f"    Min momentum: {PIVOT_MIN_MOMENTUM:.0%} price drop  |  "
+                 f"Min score momentum: {PIVOT_MIN_SCORE_MOMENTUM}")
+        log.info(f"    Exit at {PIVOT_EXIT_PRICE}¢  |  Hard SL {PIVOT_HARD_SL_PCT:.0f}%")
+    else:
+        log.info("  PIVOT TRADE (disabled — set PIVOT_ENABLED=true to activate)")
     log.info("=" * 72)
 
     if DRY_RUN:
