@@ -11,7 +11,11 @@ from app.models import (
     PlayerInfo, TournamentLevel, Surface,
 )
 from app.automation import run_automation_cycle, get_status, get_all_orders
-from app.scheduler import start_automation, stop_automation, scheduler_state
+from app.scheduler import (
+    start_automation, stop_automation, scheduler_state,
+    start_pivot_scanner, stop_pivot_scanner,
+)
+from app.pivot_trade import scan_and_pivot, get_pivot_status, get_pivot_history
 from app.bet_tracker import (
     track_bet, get_all_bets, get_bet_by_id, update_outcome, get_stats,
 )
@@ -349,6 +353,66 @@ async def automation_orders():
     try:
         orders = await get_all_orders()
         return {"orders": orders, "count": len(orders)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Pivot Trade endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/pivot/status")
+async def pivot_status():
+    """
+    Returns current pivot scanner state:
+    - Whether the scanner is running and config (stop-loss %, momentum threshold)
+    - Last scan summary (positions checked, pivots executed, stop-losses)
+    """
+    return {
+        "scheduler": scheduler_state().get("pivot_scanner", {}),
+        "pivot": get_pivot_status(),
+    }
+
+
+@router.post("/pivot/start")
+async def pivot_start():
+    """
+    Start the pivot trade scanner.
+    Scans open positions every PIVOT_SCAN_SECONDS (default: 30s).
+    Runs one scan immediately, then repeats on interval.
+    """
+    try:
+        result = await start_pivot_scanner()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/pivot/stop")
+async def pivot_stop():
+    """Stop the pivot scanner (does not affect existing positions)."""
+    return stop_pivot_scanner()
+
+
+@router.post("/pivot/scan")
+async def pivot_scan_once():
+    """
+    Manually trigger one pivot scan without affecting the scheduler.
+    Useful for testing the logic before enabling automatic scanning.
+    """
+    try:
+        summary = await scan_and_pivot()
+        return summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pivot/history")
+async def pivot_history():
+    """Return the log of all pivot trades and stop-loss exits."""
+    try:
+        history = await get_pivot_history()
+        return {"trades": history, "count": len(history)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

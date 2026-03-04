@@ -14,14 +14,17 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.automation import run_automation_cycle, init_db
+from app.pivot_trade import scan_and_pivot, init_pivot_db
 
 logger = logging.getLogger(__name__)
 
 INTERVAL_MINUTES = int(os.getenv("AUTOMATION_INTERVAL_MINUTES", "10"))
+PIVOT_SCAN_SECONDS = int(os.getenv("PIVOT_SCAN_SECONDS", "30"))
 AUTOSTART = os.getenv("AUTOMATION_AUTOSTART", "false").lower() == "true"
 
 _scheduler = AsyncIOScheduler()
 JOB_ID = "tennis_automation"
+PIVOT_JOB_ID = "pivot_scanner"
 
 
 async def setup_scheduler():
@@ -32,6 +35,7 @@ async def setup_scheduler():
     Set AUTOMATION_AUTOSTART=true to start automatically.
     """
     await init_db()
+    await init_pivot_db()
 
     if not _scheduler.running:
         _scheduler.start()
@@ -86,9 +90,58 @@ def _next_run() -> str | None:
     return None
 
 
+async def start_pivot_scanner() -> dict:
+    """Add the pivot scanner job (runs every PIVOT_SCAN_SECONDS)."""
+    if not _scheduler.running:
+        _scheduler.start()
+
+    _scheduler.add_job(
+        scan_and_pivot,
+        trigger=IntervalTrigger(seconds=PIVOT_SCAN_SECONDS),
+        id=PIVOT_JOB_ID,
+        name="Pivot trade scanner",
+        replace_existing=True,
+        misfire_grace_time=30,
+    )
+
+    # Run once immediately
+    await scan_and_pivot()
+
+    logger.info(f"Pivot scanner started — every {PIVOT_SCAN_SECONDS}s")
+    return {
+        "status": "started",
+        "interval_seconds": PIVOT_SCAN_SECONDS,
+        "next_run": _next_pivot_run(),
+    }
+
+
+def stop_pivot_scanner() -> dict:
+    """Remove the pivot scanner job."""
+    if _scheduler.get_job(PIVOT_JOB_ID):
+        _scheduler.remove_job(PIVOT_JOB_ID)
+        logger.info("Pivot scanner stopped")
+    return {"status": "stopped"}
+
+
+def is_pivot_running() -> bool:
+    return _scheduler.running and _scheduler.get_job(PIVOT_JOB_ID) is not None
+
+
+def _next_pivot_run() -> str | None:
+    job = _scheduler.get_job(PIVOT_JOB_ID)
+    if job and job.next_run_time:
+        return job.next_run_time.isoformat()
+    return None
+
+
 def scheduler_state() -> dict:
     return {
         "running": is_running(),
         "interval_minutes": INTERVAL_MINUTES,
         "next_run": _next_run(),
+        "pivot_scanner": {
+            "running": is_pivot_running(),
+            "interval_seconds": PIVOT_SCAN_SECONDS,
+            "next_run": _next_pivot_run(),
+        },
     }
