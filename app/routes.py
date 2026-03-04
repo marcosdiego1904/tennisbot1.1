@@ -521,9 +521,27 @@ async def debug_live_scores(fav: str = "Sinner", dog: str = "Medvedev"):
         except Exception as e:
             result["errors"].append(f"event/{test_event_id}/point-by-point: {e}")
 
-    # Test 3: Try the find_live_score function from app.live_scores
+    # Test 3: Parse all live events and show them
     try:
-        from app.live_scores import find_live_score
+        from app.live_scores import fetch_live_events, _parse_live_score, find_live_score
+
+        events = await fetch_live_events()
+        parsed_all = []
+        for ev in events:
+            s = _parse_live_score(ev)
+            if s:
+                parsed_all.append({
+                    "event_id": s.event_id,
+                    "home": s.home_player,
+                    "away": s.away_player,
+                    "status": s.status,
+                    "sets": f"{s.home_sets}-{s.away_sets}",
+                    "games": f"{s.home_games}-{s.away_games}",
+                    "set": s.current_set,
+                })
+        result["all_live_matches"] = parsed_all
+
+        # Search for specific players
         score_result = await find_live_score(fav, dog)
         if score_result:
             score, fav_is_home = score_result
@@ -540,7 +558,7 @@ async def debug_live_scores(fav: str = "Sinner", dog: str = "Medvedev"):
                 "momentum_score": score.momentum_score(fav_is_home),
             }
         else:
-            result["live_score_found"] = {"status": "not_found", "note": "No live match for these players"}
+            result["live_score_found"] = {"status": "not_found", "note": "No live match for these players right now"}
     except Exception as e:
         result["live_score_error"] = str(e)
 
