@@ -452,6 +452,101 @@ async def bets_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Debug: Live Scores (Pivot Trade)
+# ---------------------------------------------------------------------------
+
+@router.get("/debug/live-scores")
+async def debug_live_scores(fav: str = "Sinner", dog: str = "Medvedev"):
+    """
+    Debug endpoint for live scores API.
+    Tests TennisApi1 (RapidAPI) endpoints and shows the raw schema.
+
+    Ejemplo:
+      GET /api/debug/live-scores?fav=Sinner&dog=Medvedev
+      GET /api/debug/live-scores?fav=Tiafoe&dog=Svajda
+    """
+    import httpx
+    import os
+    import json
+
+    api_key = os.getenv("TENNISAPI_KEY", "")
+    if not api_key:
+        return {
+            "error": "TENNISAPI_KEY not set in environment",
+            "note": "Set TENNISAPI_KEY=your_key in .env to test",
+        }
+
+    host = "tennisapi1.p.rapidapi.com"
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": host,
+    }
+
+    result = {
+        "request": {"fav": fav, "dog": dog},
+        "endpoints_tested": {},
+        "errors": [],
+    }
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # Test 1: Live events endpoint
+        try:
+            r = await client.get(
+                f"https://{host}/api/tennis/events/live",
+                headers=headers,
+            )
+            live_data = r.json() if r.status_code == 200 else {}
+            result["endpoints_tested"]["events/live"] = {
+                "status": r.status_code,
+                "live_events_count": len(live_data.get("events", live_data)) if isinstance(live_data, (dict, list)) else 0,
+                "preview": json.dumps(live_data, indent=2)[:1500] if live_data else "No data",
+            }
+        except Exception as e:
+            result["errors"].append(f"events/live: {e}")
+
+        # Test 2: Point-by-point (using a known event ID or placeholder)
+        test_event_id = "14232981"  # fallback ID
+        try:
+            r = await client.get(
+                f"https://{host}/api/tennis/event/{test_event_id}/point-by-point",
+                headers=headers,
+            )
+            point_data = r.json() if r.status_code == 200 else {}
+            result["endpoints_tested"][f"event/{test_event_id}/point-by-point"] = {
+                "status": r.status_code,
+                "data_keys": list(point_data.keys()) if isinstance(point_data, dict) else type(point_data).__name__,
+                "preview": json.dumps(point_data, indent=2)[:1500] if point_data else "No data",
+            }
+        except Exception as e:
+            result["errors"].append(f"event/{test_event_id}/point-by-point: {e}")
+
+    # Test 3: Try the find_live_score function from app.live_scores
+    try:
+        from app.live_scores import find_live_score
+        score_result = await find_live_score(fav, dog)
+        if score_result:
+            score, fav_is_home = score_result
+            result["live_score_found"] = {
+                "status": "found",
+                "home": score.home_player,
+                "away": score.away_player,
+                "home_sets": score.home_sets,
+                "away_sets": score.away_sets,
+                "current_set": score.current_set,
+                "home_games": score.home_games,
+                "away_games": score.away_games,
+                "fav_is_home": fav_is_home,
+                "momentum_score": score.momentum_score(fav_is_home),
+            }
+        else:
+            result["live_score_found"] = {"status": "not_found", "note": "No live match for these players"}
+    except Exception as e:
+        result["live_score_error"] = str(e)
+
+    return result
+
+
 def _format_results(results: list[AnalysisResult]) -> dict:
     buy = [r for r in results if r.signal == Signal.BUY]
     wait = [r for r in results if r.signal == Signal.WAIT]
