@@ -987,45 +987,53 @@ function _updateBotDot(dotId, textId, btnId, isRunning) {
     const btn  = document.getElementById(btnId);
     if (!dot || !text || !btn) return;
 
+    btn.dataset.enabled = isRunning ? "true" : "false";
+
     if (isRunning) {
-        dot.className  = "bot-status-dot dot-on";
+        dot.className    = "bot-status-dot dot-on";
         text.textContent = "Running";
         text.style.color = "#3fb950";
         btn.textContent  = "Pause";
         btn.className    = "btn btn-sm btn-danger-outline";
     } else {
-        dot.className  = "bot-status-dot dot-off";
+        dot.className    = "bot-status-dot dot-off";
         text.textContent = "Paused";
         text.style.color = "#8b949e";
         btn.textContent  = "Start";
         btn.className    = "btn btn-sm btn-success-outline";
     }
+    btn.disabled = false;
 }
 
 async function toggleBot() {
     const btn = document.getElementById("btnBotToggle");
-    const isPaused = btn.textContent.trim() === "Start";
+    // Use data-enabled attribute — avoids relying on button text which starts as "—"
+    const isCurrentlyEnabled = btn.dataset.enabled === "true";
     btn.disabled = true;
 
     try {
-        await fetch(isPaused ? "/api/bot/enable" : "/api/bot/disable", { method: "POST" });
+        const resp = await fetch(isCurrentlyEnabled ? "/api/bot/disable" : "/api/bot/enable", { method: "POST" });
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
         await loadBotControls();
-    } catch (_) {
-    } finally {
+    } catch (err) {
+        console.error("Bot toggle failed:", err);
+        alert("Failed to toggle bot: " + err.message);
         btn.disabled = false;
     }
 }
 
 async function toggleAutomation() {
     const btn = document.getElementById("btnAutomationToggle");
-    const isPaused = btn.textContent.trim() === "Start";
+    const isCurrentlyEnabled = btn.dataset.enabled === "true";
     btn.disabled = true;
 
     try {
-        await fetch(isPaused ? "/api/automation/start" : "/api/automation/stop", { method: "POST" });
+        const resp = await fetch(isCurrentlyEnabled ? "/api/automation/stop" : "/api/automation/start", { method: "POST" });
+        if (!resp.ok) throw new Error(`Server error ${resp.status}`);
         await loadBotControls();
-    } catch (_) {
-    } finally {
+    } catch (err) {
+        console.error("Automation toggle failed:", err);
+        alert("Failed to toggle automation: " + err.message);
         btn.disabled = false;
     }
 }
