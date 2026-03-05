@@ -329,9 +329,9 @@ def _init_state_table():
                 value TEXT NOT NULL
             )
         """)
-        # Default to enabled on first run
+        # Default to disabled on first run — enable via the dashboard
         conn.execute(
-            "INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('bot_enabled', 'true')"
+            "INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('bot_enabled', 'false')"
         )
         conn.commit()
 

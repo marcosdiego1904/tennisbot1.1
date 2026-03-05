@@ -246,7 +246,7 @@ async def _get_bot_enabled() -> bool:
             )
         """)
         await db.execute(
-            "INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('bot_enabled', 'true')"
+            "INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('bot_enabled', 'false')"
         )
         await db.commit()
         async with db.execute(
