@@ -10,20 +10,35 @@ endpoint exists. IDs must be discovered via:
 Then add entries here manually.
 
 ID structure findings (from scanning):
-  - Range 5900-5999: ~96 players found — era 2003 players, very dense
-  - Range 600-699:   only 1 player (ID 603) — most of this range is empty
-  - Ranges 3000-3099 and 7000-7099: completely empty
-  - Conclusion: IDs are NOT sequential across eras; players from different
-    periods were assigned IDs in separate batches.
-  - Modern players (Sinner, Alcaraz, Tiafoe) are likely in a higher range.
-    Try: /api/debug/matchstat/scan?start=6000&count=100
-         /api/debug/matchstat/scan?start=6500&count=100
-         /api/debug/matchstat/scan?start=8000&count=100
-         /api/debug/matchstat/scan?start=10000&count=100
+  Scanned so far:
+    600-699   → 1 player  (ID 603, Inactive) — almost empty
+    3000-3099 → 0 players — completely empty
+    5900-5999 → 96 players — era ~2003, very dense (Djokovic, Monfils)
+    6000-6099 → 99 players — era ~2003-2004 (Robin Haase 6081)
+    6500-6599 → 98 players — era ~2004-2005 (Jamie Murray 6508, all Inactive singles)
+    7000-7099 → 0 players — completely empty
+
+  Pattern: IDs ~5900-6600 = players who entered ~2003-2006, then a hard stop.
+  The database appears to have been seeded in one batch for that era, then a
+  gap, then a new batch for modern players at an unknown higher range.
+
+  CONCLUSION: the /player/profile/{id} endpoint only covers IDs ~5900-6600
+  (players who entered the circuit ~2003-2006). Ranges 7000-50000+ are all
+  empty. Modern players (Tiafoe, Sinner, Alcaraz…) are NOT accessible via
+  this endpoint.
+
+  Alternative being tested via GET /api/debug/matchstat?fav=Tiafoe&dog=Svajda:
+    - Rankings endpoints (may return current player IDs)
+    - Live/schedule endpoints (may include player IDs with names)
+    - H2H endpoint with player names/slugs instead of numeric IDs
+
+  If no alternative works, H2H confirmation is limited to players in this map.
+  The bot still functions — it simply skips H2H for unknown players.
 
 Known IDs:
-  5917  = Gael Monfils    (confirmed Active via scan 5900-5999)
-  5992  = Novak Djokovic  (confirmed Active via player profile endpoint)
+  5917  = Gael Monfils    (confirmed Active, scan 5900-5999)
+  5992  = Novak Djokovic  (confirmed Active, player profile endpoint)
+  6081  = Robin Haase     (confirmed Active, scan 6000-6099)
   677   = Rafael Nadal    (UNCONFIRMED via profile — no profile found in scan
                            600-699, but H2H endpoint 5992 vs 677 returns stats
                            consistent with Djokovic/Nadal; keep for H2H use)
@@ -32,6 +47,7 @@ Known IDs:
 ATP_PLAYER_IDS: dict[str, int] = {
     "novak djokovic": 5992,
     "gael monfils":   5917,
+    "robin haase":    6081,
     "rafael nadal":   677,   # H2H-verified; no standalone profile endpoint
     # Add more after running /api/debug/matchstat/scan at higher ranges
 }
